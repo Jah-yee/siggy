@@ -149,6 +149,19 @@ impl Database {
             )?;
         }
 
+        if version < 7 {
+            self.conn.execute_batch(
+                "
+                BEGIN;
+                ALTER TABLE conversations ADD COLUMN expiration_timer INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE messages ADD COLUMN expires_in_seconds INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE messages ADD COLUMN expiration_start_ms INTEGER NOT NULL DEFAULT 0;
+                UPDATE schema_version SET version = 7;
+                COMMIT;
+                ",
+            )?;
+        }
+
         Ok(())
     }
 
@@ -168,24 +181,25 @@ impl Database {
     pub fn load_conversations(&self, msg_limit: usize) -> Result<Vec<Conversation>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT id, name, is_group FROM conversations")?;
+            .prepare("SELECT id, name, is_group, expiration_timer FROM conversations")?;
 
-        let convs: Vec<(String, String, bool)> = stmt
+        let convs: Vec<(String, String, bool, i64)> = stmt
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, i32>(2)? != 0,
+                    row.get::<_, i64>(3)?,
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let mut result = Vec::with_capacity(convs.len());
 
-        for (id, name, is_group) in convs {
+        for (id, name, is_group, expiration_timer) in convs {
             // Load last N messages
             let mut msg_stmt = self.conn.prepare(
-                "SELECT sender, timestamp, body, is_system, status, timestamp_ms, is_edited, is_deleted, quote_author, quote_body, quote_ts_ms, sender_id FROM messages
+                "SELECT sender, timestamp, body, is_system, status, timestamp_ms, is_edited, is_deleted, quote_author, quote_body, quote_ts_ms, sender_id, expires_in_seconds, expiration_start_ms FROM messages
                  WHERE conversation_id = ?1
                  ORDER BY timestamp_ms DESC, rowid DESC LIMIT ?2",
             )?;
@@ -204,10 +218,12 @@ impl Database {
                     let quote_body: Option<String> = row.get(9)?;
                     let quote_ts_ms: Option<i64> = row.get(10)?;
                     let sender_id: String = row.get(11)?;
-                    Ok((sender, ts_str, body, is_system, status_i32, timestamp_ms, is_edited, is_deleted, quote_author, quote_body, quote_ts_ms, sender_id))
+                    let expires_in_seconds: i64 = row.get(12)?;
+                    let expiration_start_ms: i64 = row.get(13)?;
+                    Ok((sender, ts_str, body, is_system, status_i32, timestamp_ms, is_edited, is_deleted, quote_author, quote_body, quote_ts_ms, sender_id, expires_in_seconds, expiration_start_ms))
                 })?
                 .filter_map(|r| r.ok())
-                .filter_map(|(sender, ts_str, body, is_system, status_i32, timestamp_ms, is_edited, is_deleted, quote_author, quote_body, quote_ts_ms, sender_id)| {
+                .filter_map(|(sender, ts_str, body, is_system, status_i32, timestamp_ms, is_edited, is_deleted, quote_author, quote_body, quote_ts_ms, sender_id, expires_in_seconds, expiration_start_ms)| {
                     let timestamp = chrono::DateTime::parse_from_rfc3339(&ts_str)
                         .ok()?
                         .with_timezone(&chrono::Utc);
@@ -236,6 +252,8 @@ impl Database {
                         is_edited,
                         is_deleted,
                         sender_id,
+                        expires_in_seconds,
+                        expiration_start_ms,
                     })
                 })
                 .collect();
@@ -274,6 +292,7 @@ impl Database {
                 messages,
                 unread,
                 is_group,
+                expiration_timer,
             });
         }
 
@@ -309,7 +328,7 @@ impl Database {
         status: Option<MessageStatus>,
         timestamp_ms: i64,
     ) -> Result<i64> {
-        self.insert_message_full(conv_id, sender, timestamp, body, is_system, status, timestamp_ms, "", None, None, None)
+        self.insert_message_full(conv_id, sender, timestamp, body, is_system, status, timestamp_ms, "", None, None, None, 0, 0)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -326,12 +345,14 @@ impl Database {
         quote_author: Option<&str>,
         quote_body: Option<&str>,
         quote_ts_ms: Option<i64>,
+        expires_in_seconds: i64,
+        expiration_start_ms: i64,
     ) -> Result<i64> {
         let status_i32 = status.map(|s| s.to_i32()).unwrap_or(0);
         self.conn.execute(
-            "INSERT INTO messages (conversation_id, sender, timestamp, body, is_system, status, timestamp_ms, sender_id, quote_author, quote_body, quote_ts_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![conv_id, sender, timestamp, body, is_system as i32, status_i32, timestamp_ms, sender_id, quote_author, quote_body, quote_ts_ms],
+            "INSERT INTO messages (conversation_id, sender, timestamp, body, is_system, status, timestamp_ms, sender_id, quote_author, quote_body, quote_ts_ms, expires_in_seconds, expiration_start_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![conv_id, sender, timestamp, body, is_system as i32, status_i32, timestamp_ms, sender_id, quote_author, quote_body, quote_ts_ms, expires_in_seconds, expiration_start_ms],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -584,6 +605,27 @@ impl Database {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(ids.into_iter().collect())
     }
+
+    // --- Disappearing messages ---
+
+    pub fn update_expiration_timer(&self, conv_id: &str, seconds: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE conversations SET expiration_timer = ?2 WHERE id = ?1",
+            params![conv_id, seconds],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_expired_messages(&self, now_ms: i64) -> Result<usize> {
+        let deleted = self.conn.execute(
+            "DELETE FROM messages WHERE expires_in_seconds > 0
+             AND expiration_start_ms > 0
+             AND (expiration_start_ms + expires_in_seconds * 1000) < ?1",
+            params![now_ms],
+        )?;
+        Ok(deleted)
+    }
+
 }
 
 #[cfg(test)]
