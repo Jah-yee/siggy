@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.3.0
+
+### Bug fixes
+
+- **Unicode input crash** -- typing accented characters (á, ã, ó, é) caused a
+  panic due to cursor arithmetic assuming single-byte characters. All cursor
+  movement, insertion, and deletion now correctly handle multi-byte UTF-8
+  characters (#166)
+
+### Security
+
+- **SQLite secure_delete** -- added `PRAGMA secure_delete = ON` so deleted
+  message content is zeroed in database free pages rather than left recoverable
+  (#161)
+- **Debug log PII redaction** -- `--debug` now masks phone numbers and message
+  bodies in log output. Use `--debug-full` for unredacted output when needed
+  (#163)
+- **Security documentation** -- added a comprehensive security page to the
+  docsite covering trust model, credential storage, encryption at rest, and
+  privacy features (#164)
+
+### Enhancements
+
+- **Notification preview in settings** -- the `notification_preview` setting
+  ("full", "sender", "minimal") is now accessible as a cycle toggle in the
+  `/settings` overlay (#162)
+
+---
+
 ## v1.2.2
 
 ### Bug fixes
