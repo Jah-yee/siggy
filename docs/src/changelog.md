@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.2.0
+
+### New features
+
+- **Configurable keybindings** -- keybindings are now fully configurable via
+  three built-in profiles (Default, Emacs, Minimal), custom TOML profiles in
+  `~/.config/siggy/keybindings/`, and per-key overrides in
+  `~/.config/siggy/keybindings.toml`. Switch profiles and rebind keys live in
+  the new `/keybindings` overlay. The help overlay dynamically reflects active
+  bindings (#138)
+- **Message history pagination** -- scrolling to the top of a conversation
+  automatically loads older messages from the database, with a loading indicator
+  while fetching (#158)
+- **Multi-line message input** -- press Alt+Enter (or Shift+Enter) to insert
+  newlines in your message before sending (#157)
+
+---
+
 ## v1.1.0
 
 ### New features
