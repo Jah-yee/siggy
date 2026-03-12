@@ -26,16 +26,22 @@ download_dir = "/home/user/signal-downloads"
 notify_direct = true
 notify_group = true
 desktop_notifications = false
+notification_preview = "full"
+clipboard_clear_seconds = 30
 inline_images = true
+show_link_previews = true
 native_images = false
+date_separators = true
 show_receipts = true
 color_receipts = true
 nerd_fonts = false
 reaction_verbose = false
 send_read_receipts = true
 mouse_enabled = true
+sidebar_on_right = false
 theme = "Default"
 keybinding_profile = "Default"
+settings_profile = "Default"
 proxy = ""
 ```
 
@@ -49,16 +55,22 @@ proxy = ""
 | `notify_direct` | bool | `true` | Terminal bell on new direct messages |
 | `notify_group` | bool | `true` | Terminal bell on new group messages |
 | `desktop_notifications` | bool | `false` | OS-level desktop notifications for incoming messages |
+| `notification_preview` | string | `"full"` | Notification content level: `full`, `sender`, or `minimal` |
+| `clipboard_clear_seconds` | int | `30` | Seconds before clipboard auto-clears after copying (0 = disabled) |
 | `inline_images` | bool | `true` | Render image attachments as halfblock art |
+| `show_link_previews` | bool | `true` | Show link preview cards for URLs in messages |
 | `native_images` | bool | `false` | Use native terminal image protocols (Kitty/iTerm2) |
+| `date_separators` | bool | `true` | Show date separator lines between messages from different days |
 | `show_receipts` | bool | `true` | Show delivery/read receipt status symbols |
 | `color_receipts` | bool | `true` | Colored receipt status symbols (vs monochrome) |
 | `nerd_fonts` | bool | `false` | Use Nerd Font glyphs for status symbols |
 | `reaction_verbose` | bool | `false` | Show reaction sender names instead of counts |
 | `send_read_receipts` | bool | `true` | Send read receipts when viewing conversations |
 | `mouse_enabled` | bool | `true` | Enable mouse support (click sidebar, scroll, etc.) |
+| `sidebar_on_right` | bool | `false` | Display sidebar on the right side instead of left |
 | `theme` | string | `"Default"` | Color theme name |
 | `keybinding_profile` | string | `"Default"` | Keybinding profile (`Default`, `Emacs`, `Minimal`, or custom) |
+| `settings_profile` | string | `"Default"` | Settings profile preset (`Default`, `Minimal`, `Full`, or custom) |
 | `proxy` | string | `""` | Signal TLS proxy URL passed through to signal-cli |
 
 ## CLI flags
@@ -79,17 +91,42 @@ Press `/settings` inside the app to open the settings overlay. This provides
 toggles for runtime settings:
 
 - Notification toggles (direct / group / desktop)
-- Sidebar visibility
-- Inline image previews / native images
+- Notification preview level
+- Sidebar visibility / position
+- Inline image previews / link previews / native images
+- Date separators
 - Show read receipts / receipt colors / nerd font icons
 - Verbose reactions
 - Send read receipts
 - Mouse support
 - Theme selector
 - Keybinding profile selector
+- Settings profile selector
 
 Changes made in the settings overlay are saved to the config file when you
 close the overlay, and persist across sessions.
+
+## Settings profiles
+
+Settings profiles are presets that configure all display toggles at once.
+Three built-in profiles are included:
+
+| Profile | Description |
+|---|---|
+| **Default** | Balanced defaults for most users |
+| **Minimal** | IRC-style stripped back UI - disables images, previews, receipts, notifications, date separators |
+| **Full** | Everything enabled |
+
+In the settings overlay, use `h`/`l` on the Profile row to cycle through
+profiles, or press Enter to open the profile management overlay where you can:
+
+- **Load** a profile (Enter) - applies all toggles and previews the result
+- **Save as** (S) - save your current settings as a new custom profile
+- **Save** (s) - overwrite a custom profile with current settings
+- **Delete** (d) - remove a custom profile
+
+Custom profiles are stored as TOML files in `~/.config/siggy/profiles/`.
+Built-in profiles cannot be modified or deleted.
 
 ## Incognito mode
 

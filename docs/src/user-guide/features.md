@@ -41,11 +41,20 @@ The database is stored alongside the config file:
 - **Linux / macOS:** `~/.config/siggy/siggy.db`
 - **Windows:** `%APPDATA%\siggy\siggy.db`
 
+## Date separators
+
+Day-boundary separator lines appear between messages from different days,
+showing "Today", "Yesterday", or the full date (e.g. "Mar 12, 2026"). Toggle
+via `/settings` > "Date separators" (enabled by default).
+
 ## Unread tracking
 
 The sidebar shows unread counts next to each conversation. When you open a
 conversation, a "new messages" separator line marks where you left off. Read
 markers persist across restarts.
+
+Conversations automatically reorder to the top of the sidebar when messages
+are sent or received, so your most active chats are always visible.
 
 ## Notifications
 
