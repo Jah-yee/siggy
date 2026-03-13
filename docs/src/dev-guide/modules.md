@@ -2,6 +2,36 @@
 
 siggy is organized into a flat module structure under `src/`.
 
+## Module dependency graph
+
+```mermaid
+graph TD
+    MAIN["main.rs<br/><i>entry point + event loop</i>"]
+    APP["app.rs<br/><i>all application state</i>"]
+    UI["ui.rs<br/><i>stateless rendering</i>"]
+    CLIENT["signal/client.rs<br/><i>signal-cli process</i>"]
+    TYPES["signal/types.rs<br/><i>shared types</i>"]
+    DB["db.rs<br/><i>SQLite persistence</i>"]
+    CONFIG["config.rs<br/><i>TOML config</i>"]
+    INPUT["input.rs<br/><i>command parsing</i>"]
+    SETUP["setup.rs<br/><i>first-run wizard</i>"]
+    LINK["link.rs<br/><i>device linking</i>"]
+
+    MAIN --> APP
+    MAIN --> UI
+    MAIN --> CLIENT
+    MAIN --> CONFIG
+    MAIN --> SETUP
+    MAIN --> DB
+    SETUP --> LINK
+    APP --> DB
+    APP --> TYPES
+    APP --> INPUT
+    APP --> CONFIG
+    CLIENT --> TYPES
+    UI --> APP
+```
+
 ## Source files
 
 ### `main.rs`
@@ -82,7 +112,7 @@ Fields: `account`, `signal_cli_path`, `download_dir`, `notify_direct`,
 
 Input parsing. Converts text input into an `InputAction` enum. Handles all
 slash commands (`/join`, `/part`, `/quit`, `/sidebar`, `/bell`, `/mute`,
-`/block`, `/unblock`, `/attach`, `/search`, `/contacts`, `/settings`,
+`/block`, `/unblock`, `/attach`, `/paste`, `/search`, `/contacts`, `/settings`,
 `/disappearing`, `/group`, `/theme`, `/poll`, `/verify`, `/profile`,
 `/about`, `/help`) and their aliases.
 

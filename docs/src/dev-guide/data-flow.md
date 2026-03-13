@@ -2,12 +2,23 @@
 
 ## Outbound messages (user sends)
 
-```
-1. User types message + presses Enter
-2. input::parse_input() -> InputAction::SendText
-3. App sends JsonRpcRequest via mpsc to SignalClient
-4. SignalClient writes JSON-RPC to signal-cli stdin
-5. signal-cli transmits via Signal protocol
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant I as input.rs
+    participant A as App
+    participant SC as SignalClient
+    participant CLI as signal-cli
+
+    U->>I: Type message + Enter
+    I->>A: InputAction::SendText
+    A->>A: Add message locally<br/>(optimistic display)
+    A->>A: Persist to SQLite
+    A->>SC: JsonRpcRequest (mpsc)
+    SC->>CLI: JSON-RPC via stdin
+    CLI-->>SC: Response with server timestamp
+    SC-->>A: SignalEvent::SendResult
+    A->>A: Update message status<br/>(Sending → Sent)
 ```
 
 The request is a JSON-RPC call to the `send` method with the recipient and
@@ -15,20 +26,23 @@ message body as parameters. Each request gets a unique UUID as its RPC ID.
 
 ## Inbound messages (received)
 
-```
-1. signal-cli receives message via Signal protocol
-2. signal-cli writes JSON-RPC notification to stdout
-3. SignalClient stdout reader parses the JSON line
-4. Notification has method = "receive" with message data
-5. Parsed into SignalEvent::MessageReceived
-6. Sent through mpsc channel to main thread
-7. App::handle_signal_event() processes it:
-   a. get_or_create_conversation() ensures the conversation exists
-   b. Message is appended to the conversation's message list
-   c. Message is inserted into SQLite
-   d. Unread count is updated (if not the active conversation)
-   e. Terminal bell fires (if notifications enabled and not muted)
-8. Next render cycle shows the new message
+```mermaid
+sequenceDiagram
+    participant CLI as signal-cli
+    participant SR as stdout reader
+    participant A as App
+    participant DB as SQLite
+    participant UI as ui.rs
+
+    CLI->>SR: JSON-RPC notification<br/>(method: "receive")
+    SR->>A: SignalEvent::MessageReceived<br/>(mpsc channel)
+    A->>A: get_or_create_conversation()
+    A->>A: Append to message list
+    A->>DB: Insert message
+    A->>A: Update unread count
+    A->>A: Reorder sidebar
+    Note over A: Terminal bell<br/>(if enabled + not muted)
+    A->>UI: Next render cycle
 ```
 
 ## RPC request/response correlation
@@ -40,9 +54,9 @@ signal-cli uses JSON-RPC 2.0. There are two types of messages:
 Notifications arrive as JSON-RPC **requests** from signal-cli (they have a
 `method` field). These include:
 
-- `receive` -- incoming message
-- `receiveTyping` -- typing indicator
-- `receiveReceipt` -- delivery/read receipt
+- `receive` - incoming message
+- `receiveTyping` - typing indicator
+- `receiveReceipt` - delivery/read receipt
 
 These are unsolicited and do not have an `id` field matching any outbound request.
 
@@ -52,18 +66,20 @@ When siggy sends a request (e.g., `listContacts`, `listGroups`, `send`),
 signal-cli replies with a response that has a matching `id` field and a `result`
 (or `error`) field.
 
-The `pending_requests` map in `SignalClient` stores `id -> method` pairs. When
+```mermaid
+sequenceDiagram
+    participant S as siggy
+    participant CLI as signal-cli
+
+    S->>CLI: {"id": "abc-123",<br/>"method": "listContacts"}
+    Note over S: pending_requests["abc-123"]<br/>= "listContacts"
+    CLI-->>S: {"id": "abc-123",<br/>"result": [...]}
+    Note over S: Lookup method by ID<br/>→ parse as Vec<Contact><br/>→ emit ContactList
+```
+
+The `pending_requests` map in `SignalClient` stores `id → method` pairs. When
 a response arrives, the client looks up the method by ID to know how to parse
-the result:
-
-```
-outbound:  { "jsonrpc": "2.0", "id": "abc-123", "method": "listContacts", ... }
-inbound:   { "jsonrpc": "2.0", "id": "abc-123", "result": [...] }
-
-pending_requests["abc-123"] = "listContacts"
--> parse result as Vec<Contact>
--> emit SignalEvent::ContactList
-```
+the result.
 
 ## Sync messages
 
@@ -74,14 +90,19 @@ and displays them as outgoing messages.
 
 ## Channel architecture
 
-```
-                     mpsc::channel
-SignalClient ───────────────────────> App (main thread)
-  (tokio tasks)      SignalEvent
+```mermaid
+graph LR
+    subgraph tokio["SignalClient (tokio tasks)"]
+        SR["stdout reader"]
+        SW["stdin writer"]
+    end
 
-                     mpsc::channel
-App (main thread) ──────────────────> SignalClient
-                     JsonRpcRequest     (stdin writer task)
+    subgraph main["App (main thread)"]
+        APP["App state"]
+    end
+
+    SR -- "SignalEvent<br/>(mpsc, unbounded)" --> APP
+    APP -- "JsonRpcRequest<br/>(mpsc, unbounded)" --> SW
 ```
 
 Both channels are unbounded `tokio::sync::mpsc` channels. The signal event

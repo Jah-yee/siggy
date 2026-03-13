@@ -843,6 +843,24 @@ html[data-irc-mode="dark"] #mdbook-content.content main {
 }
 
 /* ═══════════════════════════════════════════════════════════
+ *  MERMAID DIAGRAMS
+ * ═══════════════════════════════════════════════════════════ */
+.mermaid-diagram {
+    background-color: var(--irc-bg-alt);
+    border: 2px solid;
+    border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+    padding: 1.2em 1em;
+    margin: 1em 0;
+    overflow-x: auto;
+    text-align: center;
+}
+
+.mermaid-diagram svg {
+    max-width: 100%;
+    height: auto;
+}
+
+/* ═══════════════════════════════════════════════════════════
  *  PRINT — strip decorative elements
  * ═══════════════════════════════════════════════════════════ */
 @media print {
