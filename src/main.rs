@@ -197,7 +197,8 @@ async fn run_main_flow(
 ) -> Result<()> {
     if demo_mode {
         let database = db::Database::open_in_memory()?;
-        return run_demo_app(terminal, database).await;
+        let demo_config = Config { account: "+15551234567".to_string(), ..Config::default() };
+        return run_app(terminal, MessagingBackend::Demo, &demo_config, database, false).await;
     }
 
     // Run setup wizard if needed
@@ -301,7 +302,7 @@ async fn run_main_flow(
     };
 
     // Run the app
-    let result = run_app(terminal, &mut signal_client, config, database, incognito).await;
+    let result = run_app(terminal, MessagingBackend::Signal(&mut signal_client), config, database, incognito).await;
 
     // Shut down signal-cli
     signal_client.shutdown().await?;
@@ -648,7 +649,7 @@ async fn dispatch_send(
         }
         SendRequest::ReadReceipt { recipient, timestamps } => {
             if let Err(e) = signal_client.send_read_receipt(&recipient, &timestamps).await {
-                crate::debug_log::logf(format_args!("read receipt error: {e}"));
+                debug_log::logf(format_args!("read receipt error: {e}"));
             }
         }
         SendRequest::UpdateExpiration { conv_id, is_group, seconds } => {
@@ -800,9 +801,57 @@ async fn dispatch_send(
     }
 }
 
+enum MessagingBackend<'a> {
+    Signal(&'a mut SignalClient),
+    Demo,
+}
+
+impl MessagingBackend<'_> {
+    async fn dispatch(&mut self, app: &mut App, req: SendRequest) {
+        if let MessagingBackend::Signal(sc) = self {
+            dispatch_send(sc, app, req).await;
+        }
+    }
+
+    fn drain_events(&mut self, app: &mut App) -> bool {
+        let MessagingBackend::Signal(sc) = self else { return false };
+        let mut changed = false;
+        loop {
+            match sc.event_rx.try_recv() {
+                Ok(ev) => {
+                    app.handle_signal_event(ev);
+                    changed = true;
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    if app.connection_error.is_none() {
+                        let stderr = sc.stderr_output();
+                        let exit_info = sc.try_child_exit();
+                        let msg = if let Some(last_line) = stderr.lines().last().filter(|l| !l.is_empty()) {
+                            format!("signal-cli: {last_line}")
+                        } else if let Some(code) = exit_info {
+                            match code {
+                                Some(c) => format!("signal-cli exited with code {c}"),
+                                None => "signal-cli killed by signal".to_string(),
+                            }
+                        } else {
+                            "signal-cli disconnected".to_string()
+                        };
+                        debug_log::logf(format_args!("disconnect: {msg}"));
+                        app.connection_error = Some(msg);
+                        app.connected = false;
+                    }
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+        changed
+    }
+}
+
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    signal_client: &mut SignalClient,
+    mut backend: MessagingBackend<'_>,
     config: &Config,
     db: db::Database,
     incognito: bool,
@@ -839,20 +888,28 @@ async fn run_app(
         .flat_map(|c| &c.messages)
         .filter(|m| m.expires_in_seconds > 0)
         .count();
-    app.set_connected();
+    if let MessagingBackend::Signal(sc) = &mut backend {
+        app.set_connected();
 
-    // Purge messages that expired while the app was closed
-    app.sweep_expired_messages();
+        // Purge messages that expired while the app was closed
+        app.sweep_expired_messages();
 
-    // Ask primary device to sync contacts/groups, then fetch them (best-effort)
-    app.startup_status = "Syncing with primary device...".to_string();
-    let _ = signal_client.send_sync_request().await;
-    app.startup_status = "Loading contacts...".to_string();
-    let _ = signal_client.list_contacts().await;
-    app.startup_status = "Loading groups...".to_string();
-    let _ = signal_client.list_groups().await;
-    app.startup_status = "Loading identities...".to_string();
-    let _ = signal_client.list_identities().await;
+        // Ask primary device to sync contacts/groups, then fetch them (best-effort)
+        app.startup_status = "Syncing with primary device...".to_string();
+        let _ = sc.send_sync_request().await;
+        app.startup_status = "Loading contacts...".to_string();
+        let _ = sc.list_contacts().await;
+        app.startup_status = "Loading groups...".to_string();
+        let _ = sc.list_groups().await;
+        app.startup_status = "Loading identities...".to_string();
+        let _ = sc.list_identities().await;
+    } else {
+        app.is_demo = true;
+        app.connected = true;
+        app.loading = false;
+        app.status_message = "connected | demo mode".to_string();
+        populate_demo_data(&mut app);
+    }
 
     let mut last_expiry_sweep = Instant::now();
     let mut needs_redraw = true;
@@ -926,7 +983,7 @@ async fn run_app(
                     } else if !app.handle_global_key(key.modifiers, key.code) {
                         let (overlay_handled, send_request) = app.handle_overlay_key(key.code);
                         if let Some(req) = send_request {
-                            dispatch_send(signal_client, &mut app, req).await;
+                            backend.dispatch(&mut app, req).await;
                         }
                         if !overlay_handled {
                             let send_request = match app.mode {
@@ -934,19 +991,19 @@ async fn run_app(
                                 InputMode::Insert => app.handle_insert_key(key.modifiers, key.code),
                             };
                             if let Some(req) = send_request {
-                                dispatch_send(signal_client, &mut app, req).await;
+                                backend.dispatch(&mut app, req).await;
                             }
                         }
                     }
                 }
                 Event::Mouse(mouse) => {
                     if let Some(req) = app.handle_mouse_event(mouse) {
-                        dispatch_send(signal_client, &mut app, req).await;
+                        backend.dispatch(&mut app, req).await;
                     }
                 }
                 Event::Paste(text) => {
                     if let Some(req) = app.handle_paste(text) {
-                        dispatch_send(signal_client, &mut app, req).await;
+                        backend.dispatch(&mut app, req).await;
                     }
                 }
                 Event::Resize(..) => {
@@ -957,44 +1014,13 @@ async fn run_app(
         }
 
         // Drain signal events (non-blocking), detect disconnect
-        loop {
-            match signal_client.event_rx.try_recv() {
-                Ok(ev) => {
-                    app.handle_signal_event(ev);
-                    needs_redraw = true;
-                }
-                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                    if app.connection_error.is_none() {
-                        let stderr = signal_client.stderr_output();
-                        let exit_info = signal_client.try_child_exit();
-                        let msg = if let Some(last_line) = stderr.lines().last().filter(|l| !l.is_empty()) {
-                            format!("signal-cli: {last_line}")
-                        } else if let Some(code) = exit_info {
-                            match code {
-                                Some(c) => format!("signal-cli exited with code {c}"),
-                                None => "signal-cli killed by signal".to_string(),
-                            }
-                        } else {
-                            "signal-cli disconnected".to_string()
-                        };
-                        debug_log::logf(format_args!("disconnect: {msg}"));
-                        app.connection_error = Some(msg);
-                        app.connected = false;
-                    }
-                    break;
-                }
-                Err(_) => break, // Empty, no more events
-            }
+        if backend.drain_events(&mut app) {
+            needs_redraw = true;
         }
 
         // Dispatch queued read receipts
         for (recipient, timestamps) in std::mem::take(&mut app.pending_read_receipts) {
-            dispatch_send(
-                signal_client,
-                &mut app,
-                SendRequest::ReadReceipt { recipient, timestamps },
-            )
-            .await;
+            backend.dispatch(&mut app, SendRequest::ReadReceipt { recipient, timestamps }).await;
         }
 
         // Expire stale typing indicators
@@ -1004,11 +1030,11 @@ async fn run_app(
 
         // Check if our outgoing typing indicator has timed out
         if let Some(typing_stop) = app.check_typing_timeout() {
-            dispatch_send(signal_client, &mut app, typing_stop).await;
+            backend.dispatch(&mut app, typing_stop).await;
         }
         // Drain pending typing stop from conversation switches
         if let Some(typing_stop) = app.pending_typing_stop.take() {
-            dispatch_send(signal_client, &mut app, typing_stop).await;
+            backend.dispatch(&mut app, typing_stop).await;
         }
 
         // Periodic sweep of expired disappearing messages (every 10s)
@@ -1021,7 +1047,7 @@ async fn run_app(
         // Terminal bell on new messages in background conversations
         if app.pending_bell {
             app.pending_bell = false;
-            execute!(terminal.backend_mut(), crossterm::style::Print("\x07"))?;
+            execute!(terminal.backend_mut(), Print("\x07"))?;
         }
 
         // Auto-clear clipboard after timeout
@@ -1057,104 +1083,6 @@ async fn run_app(
     Ok(())
 }
 
-async fn run_demo_app(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    db: db::Database,
-) -> Result<()> {
-    let mut app = App::new("+15551234567".to_string(), db);
-    app.is_demo = true;
-    app.connected = true;
-    app.loading = false;
-    app.status_message = "connected | demo mode".to_string();
-
-    populate_demo_data(&mut app);
-    let mut needs_redraw = true;
-
-    loop {
-        if needs_redraw {
-            queue!(terminal.backend_mut(), BeginSynchronizedUpdate)?;
-
-            if app.native_images && app.active_conversation != app.prev_active_conversation {
-                app.prev_active_conversation = app.active_conversation.clone();
-                terminal.clear()?;
-            }
-            terminal.draw(|frame| ui::draw(frame, &mut app))?;
-            let has_post_draw = !app.link_regions.is_empty() || app.native_images;
-            if has_post_draw && app.mode == InputMode::Insert {
-                queue!(terminal.backend_mut(), Hide)?;
-            }
-            emit_osc8_links(terminal.backend_mut(), &app.link_regions, app.theme.link)?;
-            if app.native_images {
-                emit_native_images(terminal.backend_mut(), &mut app)?;
-            }
-            if has_post_draw && app.mode == InputMode::Insert {
-                queue!(terminal.backend_mut(), Show)?;
-            }
-            execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
-            needs_redraw = false;
-        }
-
-        if app.ensure_active_images() {
-            needs_redraw = true;
-        }
-
-        let has_terminal_event = event::poll(POLL_TIMEOUT)?;
-
-        if has_terminal_event {
-            needs_redraw = true;
-            match event::read()? {
-                Event::Key(key) => {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
-                    }
-                    if app.keybindings_capturing {
-                        app.handle_keybinding_capture(key.modifiers, key.code);
-                    } else if !app.handle_global_key(key.modifiers, key.code) {
-                        let (overlay_handled, _) = app.handle_overlay_key(key.code);
-                        if !overlay_handled {
-                            let _ = match app.mode {
-                                InputMode::Normal => app.handle_normal_key(key.modifiers, key.code),
-                                // In demo mode, messages echo locally but don't send
-                                InputMode::Insert => app.handle_insert_key(key.modifiers, key.code),
-                            };
-                        }
-                    }
-                }
-                Event::Mouse(mouse) => {
-                    app.handle_mouse_event(mouse);
-                }
-                Event::Paste(text) => {
-                    app.handle_paste(text);
-                }
-                Event::Resize(..) => {
-                    app.clear_kitty_state();
-                }
-                _ => {}
-            }
-        }
-
-        if app.cleanup_typing() {
-            needs_redraw = true;
-        }
-
-        let unread = app.total_unread();
-        let title = if unread > 0 {
-            format!("siggy ({unread})")
-        } else {
-            "siggy".to_string()
-        };
-        execute!(terminal.backend_mut(), crossterm::terminal::SetTitle(&title))?;
-
-        if app.should_quit {
-            break;
-        }
-    }
-
-    execute!(terminal.backend_mut(), crossterm::terminal::SetTitle(""))
-        .ok();
-
-    Ok(())
-}
 
 fn populate_demo_data(app: &mut App) {
     use chrono::{TimeZone, Utc};
@@ -1177,7 +1105,7 @@ fn populate_demo_data(app: &mut App) {
             is_system: false,
             image_lines: None,
             image_path: None,
-            status: if is_outgoing { Some(crate::signal::types::MessageStatus::Sent) } else { None },
+            status: if is_outgoing { Some(MessageStatus::Sent) } else { None },
             timestamp_ms: time.timestamp_millis(),
             reactions: Vec::new(),
             mention_ranges: Vec::new(),
