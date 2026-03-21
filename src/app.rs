@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::db::Database;
 use crate::image_render;
 use crate::list_overlay::{self, classify_list_key, ListKeyAction};
-use crate::domain::{FilePickerState, SearchAction, SearchState, TypingState};
+use crate::domain::{ActionMenuState, ContactsOverlayState, FilePickerState, ForwardOverlayState, GroupMenuOverlayState, ImageState, KeybindingsOverlayState, NotificationState, PinDurationOverlayState, PollVoteOverlayState, ProfileOverlayState, ReactionState, SearchAction, SearchState, SettingsProfileOverlayState, ThemePickerState, TypingState, VerifyOverlayState};
 use crate::image_render::ImageProtocol;
 use crate::input::{self, InputAction, COMMANDS};
 use crate::keybindings::{self, BindingMode, KeyAction, KeyBindings};
@@ -346,20 +346,8 @@ pub struct App {
     /// a message arrives with the new sourceName. signal-cli's listContacts may return
     /// name=None for contacts whose profile isn't cached, so envelope names fill the gaps.
     pub contact_names: HashMap<String, String>,
-    /// Bell pending — set by handle_message, drained by main loop
-    pub pending_bell: bool,
-    /// Terminal bell for 1:1 messages in background conversations
-    pub notify_direct: bool,
-    /// Terminal bell for group messages in background conversations
-    pub notify_group: bool,
-    /// OS-level desktop notifications for incoming messages
-    pub desktop_notifications: bool,
-    /// Notification preview level: "full", "sender", or "minimal"
-    pub notification_preview: String,
-    /// Seconds before clipboard is auto-cleared after copying (0 = disabled)
-    pub clipboard_clear_seconds: u64,
-    /// Timestamp when clipboard was last set (for auto-clear)
-    pub clipboard_set_at: Option<std::time::Instant>,
+    /// Notification preferences and clipboard auto-clear state
+    pub notifications: NotificationState,
     /// Conversations muted from notifications
     pub muted_conversations: HashSet<String>,
     /// Conversations blocked via signal-cli
@@ -376,51 +364,16 @@ pub struct App {
     pub settings_index: usize,
     /// Help overlay visible
     pub show_help: bool,
-    /// Contacts overlay visible
-    pub show_contacts: bool,
-    /// Cursor position in contacts list
-    pub contacts_index: usize,
-    /// Type-to-filter text for contacts overlay
-    pub contacts_filter: String,
-    /// Filtered list of (phone_number, display_name) for contacts overlay
-    pub contacts_filtered: Vec<(String, String)>,
-    /// Verify identity overlay visible
-    pub show_verify: bool,
-    /// Cursor position in verify overlay (for group member list)
-    pub verify_index: usize,
-    /// Identity info entries filtered for the current overlay
-    pub verify_identities: Vec<IdentityInfo>,
+    /// State for the contacts list overlay
+    pub contacts_overlay: ContactsOverlayState,
+    /// State for the identity verification overlay
+    pub verify: VerifyOverlayState,
     /// Cached trust levels keyed by phone number.
     /// Populated: IdentityList events (full clear + repopulate on each event).
     /// Refreshed: startup via list_identities() RPC, and after verify/trust actions.
     pub identity_trust: HashMap<String, TrustLevel>,
-    /// Confirmation pending for verify action (user must press v twice)
-    pub verify_confirming: bool,
-    /// Image display mode: "native", "halfblock", or "none"
-    pub image_mode: String,
-    /// Show link previews (title, description, thumbnail) for URLs
-    pub show_link_previews: bool,
-    /// Link regions detected in the last rendered frame (for OSC 8 injection)
-    pub link_regions: Vec<crate::ui::LinkRegion>,
-    /// Maps display text → hidden URL for attachment links (cleared each frame)
-    pub link_url_map: HashMap<String, String>,
-    /// Detected terminal image protocol (Kitty, iTerm2, Sixel, or Halfblock)
-    pub image_protocol: ImageProtocol,
-    /// Cell pixel dimensions (width, height) for Sixel encoding
-    pub cell_px: (u16, u16),
-    /// Images visible on screen for native protocol overlay (cleared each frame)
-    pub visible_images: Vec<VisibleImage>,
-    /// Previous scroll offset for Sixel stale pixel detection.
-    /// When scroll changes with Sixel visible, force full redraw to clear stale pixels.
-    pub sixel_prev_scroll: usize,
-    /// Previous frame's visible images, for skipping redundant image redraws
-    pub prev_visible_images: Vec<VisibleImage>,
-    /// Cache of pre-resized PNGs for native protocol (path → (base64, pixel_w, pixel_h)).
-    /// Populated: on-demand during native image rendering (get_or_cache_png in main.rs).
-    /// Invalidation: cleared on terminal resize (clear_kitty_state). Persists across
-    /// conversation switches so revisiting a chat doesn't re-decode images.
-    /// Keyed by path only (no modification time check).
-    pub native_image_cache: HashMap<String, (String, u32, u32)>,
+    /// Image rendering, caching, and link overlay state.
+    pub image: ImageState,
     /// Previous active conversation ID, for detecting chat switches
     pub prev_active_conversation: Option<String>,
     /// Incognito mode — in-memory DB, no local persistence
@@ -451,16 +404,8 @@ pub struct App {
     pub focused_msg_index: Option<usize>,
     /// Jump-back stack: saved (scroll_offset, focused_msg_index) before quote jumps
     pub jump_stack: Vec<(usize, Option<usize>)>,
-    /// Reaction picker overlay visible
-    pub show_reaction_picker: bool,
-    /// Selected index in the reaction picker
-    pub reaction_picker_index: usize,
-    /// Convert emoji to text emoticons/shortcodes in display
-    pub emoji_to_text: bool,
-    /// Show emoji reactions on messages
-    pub show_reactions: bool,
-    /// Show verbose reaction display (usernames instead of counts)
-    pub reaction_verbose: bool,
+    /// Reaction display preferences and picker overlay state
+    pub reactions: ReactionState,
     /// Groups indexed by group_id (with member lists for @mention autocomplete).
     /// Populated: startup via GroupList event from list_groups() RPC.
     /// Invalidation: full replacement on each GroupList event. Never cleared otherwise.
@@ -508,30 +453,12 @@ pub struct App {
     pub send_read_receipts: bool,
     /// Queued read receipts to dispatch: (recipient_phone, timestamps)
     pub pending_read_receipts: Vec<(String, Vec<i64>)>,
-    /// Action menu overlay visible
-    pub show_action_menu: bool,
-    /// Cursor position in action menu
-    pub action_menu_index: usize,
-    /// Forward message picker overlay
-    pub show_forward: bool,
-    /// Forward picker cursor index
-    pub forward_index: usize,
-    /// Forward picker type-to-filter text
-    pub forward_filter: String,
-    /// Forward picker filtered list of (conv_id, display_name)
-    pub forward_filtered: Vec<(String, String)>,
-    /// Body of the message being forwarded
-    pub forward_body: String,
-    /// Group management menu state (None = closed)
-    pub group_menu_state: Option<GroupMenuState>,
-    /// Cursor position in group menu / member lists
-    pub group_menu_index: usize,
-    /// Type-to-filter text for add/remove member pickers
-    pub group_menu_filter: String,
-    /// Filtered list of (phone, display_name) for add/remove member pickers
-    pub group_menu_filtered: Vec<(String, String)>,
-    /// Separate text input buffer for rename/create (avoids disturbing input_buffer)
-    pub group_menu_input: String,
+    /// Action menu overlay state
+    pub action_menu: ActionMenuState,
+    /// Forward message picker overlay state
+    pub forward: ForwardOverlayState,
+    /// Group management menu overlay state
+    pub group_menu: GroupMenuOverlayState,
     /// Message request overlay visible
     pub show_message_request: bool,
     /// Inner area of sidebar List widget (None when sidebar is hidden)
@@ -548,98 +475,26 @@ pub struct App {
     pub pending_mouse_toggle: Option<bool>,
     /// Active color theme
     pub theme: Theme,
-    /// Theme picker overlay visible
-    pub show_theme_picker: bool,
-    /// Cursor position in theme picker
-    pub theme_index: usize,
-    /// All available themes (built-in + custom)
-    pub available_themes: Vec<Theme>,
+    /// Theme picker overlay state
+    pub theme_picker: ThemePickerState,
     /// Active keybindings
     pub keybindings: KeyBindings,
-    /// Keybindings overlay visible
-    pub show_keybindings: bool,
-    /// Cursor position in keybindings overlay
-    pub keybindings_index: usize,
-    /// Whether capturing a new key binding
-    pub keybindings_capturing: bool,
-    /// Conflict detected during capture: (displaced_action, new_combo)
-    pub keybindings_conflict: Option<(KeyAction, keybindings::KeyCombo)>,
-    /// Profile sub-picker visible within keybindings overlay
-    pub keybindings_profile_picker: bool,
-    /// Cursor position in profile sub-picker
-    pub keybindings_profile_index: usize,
-    /// All available keybinding profile names
-    pub available_kb_profiles: Vec<String>,
-    /// Pin duration picker overlay visible
-    pub show_pin_duration: bool,
-    /// Cursor position in pin duration picker
-    pub pin_duration_index: usize,
-    /// Pending pin context while duration picker is open
-    pub pin_pending: Option<PinPending>,
-    /// Poll vote overlay visible
-    pub show_poll_vote: bool,
-    /// Cursor position in poll vote overlay
-    pub poll_vote_index: usize,
-    /// Multi-select tracking for poll vote options
-    pub poll_vote_selections: Vec<bool>,
-    /// Pending poll vote context
-    pub poll_vote_pending: Option<PollVotePending>,
-    /// Buffered poll data for polls whose message hasn't arrived yet (race condition)
-    /// Key: (conv_id, timestamp_ms)
-    pub pending_polls: HashMap<(String, i64), PollData>,
+    /// Keybindings overlay state
+    pub keybindings_overlay: KeybindingsOverlayState,
+    /// Pin duration picker overlay state
+    pub pin_duration: PinDurationOverlayState,
+    /// Poll vote overlay state
+    pub poll_vote: PollVoteOverlayState,
     /// Number of in-memory messages with expiration > 0 (skip sweeps when zero)
     pub expiring_msg_count: usize,
     /// About overlay visible
     pub show_about: bool,
-    /// Profile editor overlay visible
-    pub show_profile: bool,
-    /// Cursor position in profile editor (0-3 = fields, 4 = Save)
-    pub profile_index: usize,
-    /// Whether currently editing a profile field
-    pub profile_editing: bool,
-    /// Profile fields: [given_name, family_name, about, about_emoji]
-    pub profile_fields: [String; 4],
-    /// Temp buffer while editing a profile field
-    pub profile_edit_buffer: String,
-    /// Next Kitty image ID to assign (monotonically increasing, starts at 1).
-    pub next_kitty_image_id: u32,
-    /// Map from image path to Kitty image ID. Grows unbounded during session.
-    /// IDs are assigned during placeholder patching in ui.rs and never reclaimed.
-    pub kitty_image_ids: HashMap<String, u32>,
-    /// Set of image IDs already transmitted to the terminal.
-    /// Cleared on conversation switch (clear_kitty_placements) and resize (clear_kitty_state).
-    pub kitty_transmitted: HashSet<u32>,
-    /// Images to transmit this frame: (id, path, cell_cols, cell_rows).
-    /// Populated during ui.rs rendering, drained by emit_native_images() in main.rs.
-    pub kitty_pending_transmits: Vec<(u32, String, u16, u16)>,
-    /// Cache of cropped image base64 for iTerm2: (path, crop_top, height) -> base64.
-    /// Populated on-demand during iTerm2 rendering. Grows unbounded during session.
-    /// Cleared on terminal resize (clear_kitty_state). Persists across conversation switches.
-    pub iterm2_crop_cache: HashMap<(String, u16, u16), String>,
-    /// Cache of full Sixel-encoded images: path -> sixel_string.
-    /// Populated by pre-cache in ensure_active_images. Cleared on resize.
-    /// Partial crops are obtained instantly via `slice_sixel_bands()`.
-    pub sixel_cache: HashMap<String, String>,
-    /// Current settings profile name
-    pub settings_profile_name: String,
-    /// Settings profile manager overlay visible
-    pub show_settings_profile_manager: bool,
-    /// Cursor position in settings profile manager
-    pub settings_profile_manager_index: usize,
-    /// All available settings profiles (built-in + custom)
-    pub available_settings_profiles: Vec<crate::settings_profile::SettingsProfile>,
-    /// Save-as mode active in profile manager
-    pub settings_profile_save_as: bool,
-    /// Text input buffer for save-as name
-    pub settings_profile_save_as_input: String,
+    /// Profile editor overlay state
+    pub profile: ProfileOverlayState,
+    /// Settings profile overlay state
+    pub settings_profiles: SettingsProfileOverlayState,
     /// Mouse enabled state when settings overlay opened (for deferred toggle)
     pub settings_mouse_snapshot: bool,
-    /// Background image render channel (sender, cloned into spawn_blocking tasks)
-    pub image_render_tx: mpsc::Sender<ImageRenderResult>,
-    /// Background image render channel (receiver, polled each frame)
-    pub image_render_rx: mpsc::Receiver<ImageRenderResult>,
-    /// In-flight background renders: (conv_id, timestamp_ms, is_preview)
-    pub image_render_in_flight: HashSet<(String, i64, bool)>,
 }
 
 pub const QUICK_REACTIONS: &[&str] = &["\u{1f44d}", "\u{1f44e}", "\u{2764}\u{fe0f}", "\u{1f602}", "\u{1f62e}", "\u{1f622}", "\u{1f64f}", "\u{1f525}"];
@@ -794,24 +649,24 @@ pub const SETTINGS: &[SettingDef] = &[
     SettingDef {
         label: "Direct message notifications",
         hint: "Play a sound for incoming direct messages",
-        get: |a| a.notify_direct,
-        set: |a, v| a.notify_direct = v,
+        get: |a| a.notifications.notify_direct,
+        set: |a, v| a.notifications.notify_direct = v,
         save: Some(|c, v| c.notify_direct = v),
         on_toggle: None,
     },
     SettingDef {
         label: "Group message notifications",
         hint: "Play a sound for incoming group messages",
-        get: |a| a.notify_group,
-        set: |a, v| a.notify_group = v,
+        get: |a| a.notifications.notify_group,
+        set: |a, v| a.notifications.notify_group = v,
         save: Some(|c, v| c.notify_group = v),
         on_toggle: None,
     },
     SettingDef {
         label: "Desktop notifications",
         hint: "Show system notifications for new messages",
-        get: |a| a.desktop_notifications,
-        set: |a, v| a.desktop_notifications = v,
+        get: |a| a.notifications.desktop_notifications,
+        set: |a, v| a.notifications.desktop_notifications = v,
         save: Some(|c, v| c.desktop_notifications = v),
         on_toggle: None,
     },
@@ -826,8 +681,8 @@ pub const SETTINGS: &[SettingDef] = &[
     SettingDef {
         label: "Link previews",
         hint: "Show title and thumbnail for URLs",
-        get: |a| a.show_link_previews,
-        set: |a, v| a.show_link_previews = v,
+        get: |a| a.image.show_link_previews,
+        set: |a, v| a.image.show_link_previews = v,
         save: Some(|c, v| c.show_link_previews = v),
         on_toggle: None, // UI checks the flag; cached lines stay in memory
     },
@@ -866,24 +721,24 @@ pub const SETTINGS: &[SettingDef] = &[
     SettingDef {
         label: "Emoji to text",
         hint: "Convert emoji to text emoticons/shortcodes",
-        get: |a| a.emoji_to_text,
-        set: |a, v| a.emoji_to_text = v,
+        get: |a| a.reactions.emoji_to_text,
+        set: |a, v| a.reactions.emoji_to_text = v,
         save: Some(|c, v| c.emoji_to_text = v),
         on_toggle: None,
     },
     SettingDef {
         label: "Show reactions",
         hint: "Show emoji reactions on messages",
-        get: |a| a.show_reactions,
-        set: |a, v| a.show_reactions = v,
+        get: |a| a.reactions.show_reactions,
+        set: |a, v| a.reactions.show_reactions = v,
         save: Some(|c, v| c.show_reactions = v),
         on_toggle: None,
     },
     SettingDef {
         label: "Verbose reactions",
         hint: "Show names instead of just emoji counts",
-        get: |a| a.reaction_verbose,
-        set: |a, v| a.reaction_verbose = v,
+        get: |a| a.reactions.verbose,
+        set: |a, v| a.reactions.verbose = v,
         save: Some(|c, v| c.reaction_verbose = v),
         on_toggle: None,
     },
@@ -937,9 +792,9 @@ impl App {
         config.account = self.account.clone();
         config.theme = self.theme.name.clone();
         config.keybinding_profile = self.keybindings.profile_name.clone();
-        config.settings_profile = self.settings_profile_name.clone();
-        config.notification_preview = self.notification_preview.clone();
-        config.image_mode = self.image_mode.clone();
+        config.settings_profile = self.settings_profiles.name.clone();
+        config.notification_preview = self.notifications.notification_preview.clone();
+        config.image_mode = self.image.image_mode.clone();
         for def in SETTINGS {
             if let Some(save_fn) = def.save {
                 save_fn(&mut config, (def.get)(self));
@@ -961,8 +816,8 @@ impl App {
     pub fn ensure_active_images(&mut self) -> bool {
         // Always drain completed background renders (even if inline_images is off)
         let mut drained = false;
-        while let Ok(result) = self.image_render_rx.try_recv() {
-            self.image_render_in_flight.remove(&(
+        while let Ok(result) = self.image.image_render_rx.try_recv() {
+            self.image.image_render_in_flight.remove(&(
                 result.conv_id.clone(),
                 result.timestamp_ms,
                 result.is_preview,
@@ -982,17 +837,17 @@ impl App {
                     }
                     // Pre-populate native image caches from background task
                     if let Some((path, b64, pw, ph)) = result.pre_native_png {
-                        self.native_image_cache.entry(path).or_insert((b64, pw, ph));
+                        self.image.native_image_cache.entry(path).or_insert((b64, pw, ph));
                     }
                     if let Some((path, sixel)) = result.pre_sixel {
-                        self.sixel_cache.entry(path).or_insert(sixel);
+                        self.image.sixel_cache.entry(path).or_insert(sixel);
                     }
                     drained = true;
                 }
             }
         }
 
-        if self.image_mode == "none" {
+        if self.image.image_mode == "none" {
             return drained;
         }
         let Some(ref id) = self.active_conversation else { return drained };
@@ -1008,22 +863,22 @@ impl App {
         // Collect work items to avoid borrow conflicts: (timestamp, path, max_width, is_preview)
         let mut work: Vec<(i64, String, u32, bool)> = Vec::new();
         for msg in &conv.messages[start..end] {
-            if self.image_render_in_flight.len() + work.len() >= 4 {
+            if self.image.image_render_in_flight.len() + work.len() >= 4 {
                 break;
             }
             if msg.body.starts_with("[image:") && msg.image_lines.is_none() {
                 if let Some(ref p) = msg.image_path {
                     let key = (id.clone(), msg.timestamp_ms, false);
-                    if !self.image_render_in_flight.contains(&key) {
+                    if !self.image.image_render_in_flight.contains(&key) {
                         work.push((msg.timestamp_ms, p.clone(), 40, false));
                     }
                 }
             }
-            if self.show_link_previews && msg.preview_image_lines.is_none() {
+            if self.image.show_link_previews && msg.preview_image_lines.is_none() {
                 if let Some(ref preview) = msg.preview {
                     if let Some(ref p) = preview.image_path {
                         let key = (id.clone(), msg.timestamp_ms, true);
-                        if !self.image_render_in_flight.contains(&key) {
+                        if !self.image.image_render_in_flight.contains(&key) {
                             work.push((msg.timestamp_ms, p.clone(), 30, true));
                         }
                     }
@@ -1032,13 +887,13 @@ impl App {
         }
 
         // Spawn background render tasks
-        let native_sixel = self.image_mode == "native"
-            && self.image_protocol == image_render::ImageProtocol::Sixel;
-        let cell_px = self.cell_px;
+        let native_sixel = self.image.image_mode == "native"
+            && self.image.image_protocol == image_render::ImageProtocol::Sixel;
+        let cell_px = self.image.cell_px;
         for (ts, path, max_width, is_preview) in work {
-            self.image_render_in_flight
+            self.image.image_render_in_flight
                 .insert((id.clone(), ts, is_preview));
-            let tx = self.image_render_tx.clone();
+            let tx = self.image.image_render_tx.clone();
             let cid = id.clone();
             tokio::task::spawn_blocking(move || {
                 let lines = image_render::render_image(Path::new(&path), max_width);
@@ -1112,13 +967,13 @@ impl App {
             }
             KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Tab => {
                 if self.settings_index == preview_index {
-                    self.notification_preview = match self.notification_preview.as_str() {
+                    self.notifications.notification_preview = match self.notifications.notification_preview.as_str() {
                         "full" => "sender".to_string(),
                         "sender" => "minimal".to_string(),
                         _ => "full".to_string(),
                     };
                 } else if self.settings_index == image_mode_index {
-                    self.image_mode = match self.image_mode.as_str() {
+                    self.image.image_mode = match self.image.image_mode.as_str() {
                         "native" => "halfblock".to_string(),
                         "halfblock" => "none".to_string(),
                         _ => "native".to_string(),
@@ -1126,15 +981,15 @@ impl App {
                 } else if self.settings_index == theme_index {
                     self.show_settings = false;
                     self.save_settings();
-                    self.show_theme_picker = true;
-                    self.theme_index = self.available_themes.iter()
+                    self.theme_picker.show = true;
+                    self.theme_picker.index = self.theme_picker.available_themes.iter()
                         .position(|t| t.name == self.theme.name)
                         .unwrap_or(0);
                 } else if self.settings_index == kb_index {
                     self.show_settings = false;
                     self.save_settings();
-                    self.show_keybindings = true;
-                    self.keybindings_index = 0;
+                    self.keybindings_overlay.show = true;
+                    self.keybindings_overlay.index = 0;
                 } else if self.settings_index == profile_index {
                     self.show_settings = false;
                     self.save_settings();
@@ -1155,19 +1010,19 @@ impl App {
     /// Cycle through settings profiles (left/right on the profile row).
     /// Uses deferred hooks since the user can't see messages while the overlay is open.
     fn cycle_settings_profile(&mut self, forward: bool) {
-        if self.available_settings_profiles.is_empty() {
+        if self.settings_profiles.available.is_empty() {
             return;
         }
-        let current_idx = self.available_settings_profiles.iter()
-            .position(|p| p.name == self.settings_profile_name)
+        let current_idx = self.settings_profiles.available.iter()
+            .position(|p| p.name == self.settings_profiles.name)
             .unwrap_or(0);
         let new_idx = if forward {
-            (current_idx + 1) % self.available_settings_profiles.len()
+            (current_idx + 1) % self.settings_profiles.available.len()
         } else {
-            (current_idx + self.available_settings_profiles.len() - 1)
-                % self.available_settings_profiles.len()
+            (current_idx + self.settings_profiles.available.len() - 1)
+                % self.settings_profiles.available.len()
         };
-        let profile = self.available_settings_profiles[new_idx].clone();
+        let profile = self.settings_profiles.available[new_idx].clone();
         self.apply_settings_profile_deferred(&profile);
     }
 
@@ -1175,7 +1030,7 @@ impl App {
     /// Hooks fire when the overlay closes (settings or profile manager Esc handler).
     fn apply_settings_profile_deferred(&mut self, profile: &crate::settings_profile::SettingsProfile) {
         profile.apply_to(self);
-        self.settings_profile_name = profile.name.clone();
+        self.settings_profiles.name = profile.name.clone();
     }
 
     /// Fire on_toggle hooks only for settings that changed since the overlay opened.
@@ -1187,23 +1042,23 @@ impl App {
 
     /// Open the settings profile manager overlay.
     fn open_settings_profile_manager(&mut self) {
-        self.available_settings_profiles = crate::settings_profile::all_settings_profiles();
-        self.settings_profile_manager_index = self.available_settings_profiles.iter()
-            .position(|p| p.name == self.settings_profile_name)
+        self.settings_profiles.available = crate::settings_profile::all_settings_profiles();
+        self.settings_profiles.index = self.settings_profiles.available.iter()
+            .position(|p| p.name == self.settings_profiles.name)
             .unwrap_or(0);
-        self.show_settings_profile_manager = true;
-        self.settings_profile_save_as = false;
-        self.settings_profile_save_as_input.clear();
+        self.settings_profiles.show = true;
+        self.settings_profiles.save_as = false;
+        self.settings_profiles.save_as_input.clear();
         // Don't overwrite settings_snapshot - keep the one from when /settings opened
     }
 
     /// Handle a key press while the settings profile manager is open.
     pub fn handle_settings_profile_manager_key(&mut self, code: KeyCode) {
         // Save-as text input mode
-        if self.settings_profile_save_as {
+        if self.settings_profiles.save_as {
             match code {
                 KeyCode::Enter => {
-                    let name = self.settings_profile_save_as_input.trim().to_string();
+                    let name = self.settings_profiles.save_as_input.trim().to_string();
                     if name.is_empty() {
                         self.status_message = "Profile name cannot be empty".to_string();
                     } else if crate::settings_profile::is_builtin(&name) {
@@ -1212,10 +1067,10 @@ impl App {
                         let profile = crate::settings_profile::SettingsProfile::from_app(self, name.clone());
                         match crate::settings_profile::save_custom_profile(&profile) {
                             Ok(()) => {
-                                self.settings_profile_name = name;
-                                self.available_settings_profiles = crate::settings_profile::all_settings_profiles();
-                                self.settings_profile_manager_index = self.available_settings_profiles.iter()
-                                    .position(|p| p.name == self.settings_profile_name)
+                                self.settings_profiles.name = name;
+                                self.settings_profiles.available = crate::settings_profile::all_settings_profiles();
+                                self.settings_profiles.index = self.settings_profiles.available.iter()
+                                    .position(|p| p.name == self.settings_profiles.name)
                                     .unwrap_or(0);
                                 self.save_settings();
                                 self.status_message = "Profile saved".to_string();
@@ -1224,18 +1079,18 @@ impl App {
                                 self.status_message = format!("Save failed: {e}");
                             }
                         }
-                        self.settings_profile_save_as = false;
+                        self.settings_profiles.save_as = false;
                     }
                 }
                 KeyCode::Esc => {
-                    self.settings_profile_save_as = false;
+                    self.settings_profiles.save_as = false;
                 }
                 KeyCode::Backspace => {
-                    self.settings_profile_save_as_input.pop();
+                    self.settings_profiles.save_as_input.pop();
                 }
                 KeyCode::Char(c) => {
-                    if self.settings_profile_save_as_input.len() < 30 {
-                        self.settings_profile_save_as_input.push(c);
+                    if self.settings_profiles.save_as_input.len() < 30 {
+                        self.settings_profiles.save_as_input.push(c);
                     }
                 }
                 _ => {}
@@ -1246,16 +1101,16 @@ impl App {
         // List navigation mode
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
-                if self.settings_profile_manager_index < self.available_settings_profiles.len().saturating_sub(1) {
-                    self.settings_profile_manager_index += 1;
+                if self.settings_profiles.index < self.settings_profiles.available.len().saturating_sub(1) {
+                    self.settings_profiles.index += 1;
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.settings_profile_manager_index = self.settings_profile_manager_index.saturating_sub(1);
+                self.settings_profiles.index = self.settings_profiles.index.saturating_sub(1);
             }
             KeyCode::Enter => {
                 // Load the selected profile (stay open for preview)
-                if let Some(profile) = self.available_settings_profiles.get(self.settings_profile_manager_index).cloned() {
+                if let Some(profile) = self.settings_profiles.available.get(self.settings_profiles.index).cloned() {
                     self.apply_settings_profile_deferred(&profile);
                     self.save_settings();
                     self.status_message = format!("Loaded profile: {}", profile.name);
@@ -1263,7 +1118,7 @@ impl App {
             }
             KeyCode::Char('s') => {
                 // Save over current custom profile (only if custom and settings differ)
-                if let Some(profile) = self.available_settings_profiles.get(self.settings_profile_manager_index) {
+                if let Some(profile) = self.settings_profiles.available.get(self.settings_profiles.index) {
                     if crate::settings_profile::is_builtin(&profile.name) {
                         return;
                     }
@@ -1273,10 +1128,10 @@ impl App {
                     let updated = crate::settings_profile::SettingsProfile::from_app(self, profile.name.clone());
                     match crate::settings_profile::save_custom_profile(&updated) {
                         Ok(()) => {
-                            self.settings_profile_name = updated.name.clone();
-                            self.available_settings_profiles = crate::settings_profile::all_settings_profiles();
-                            self.settings_profile_manager_index = self.available_settings_profiles.iter()
-                                .position(|p| p.name == self.settings_profile_name)
+                            self.settings_profiles.name = updated.name.clone();
+                            self.settings_profiles.available = crate::settings_profile::all_settings_profiles();
+                            self.settings_profiles.index = self.settings_profiles.available.iter()
+                                .position(|p| p.name == self.settings_profiles.name)
                                 .unwrap_or(0);
                             self.save_settings();
                             self.status_message = "Profile saved".to_string();
@@ -1289,28 +1144,28 @@ impl App {
             }
             KeyCode::Char('S') => {
                 // Save-as: open name input
-                let has_changes = !self.available_settings_profiles.iter()
-                    .any(|p| p.name == self.settings_profile_name && p.matches_app(self));
+                let has_changes = !self.settings_profiles.available.iter()
+                    .any(|p| p.name == self.settings_profiles.name && p.matches_app(self));
                 if has_changes {
-                    self.settings_profile_save_as = true;
-                    self.settings_profile_save_as_input.clear();
+                    self.settings_profiles.save_as = true;
+                    self.settings_profiles.save_as_input.clear();
                 }
             }
             KeyCode::Char('d') => {
                 // Delete custom profile
-                if let Some(profile) = self.available_settings_profiles.get(self.settings_profile_manager_index) {
+                if let Some(profile) = self.settings_profiles.available.get(self.settings_profiles.index) {
                     if crate::settings_profile::is_builtin(&profile.name) {
                         return;
                     }
                     let name = profile.name.clone();
                     match crate::settings_profile::delete_custom_profile(&name) {
                         Ok(()) => {
-                            if self.settings_profile_name == name {
-                                self.settings_profile_name = "Default".to_string();
+                            if self.settings_profiles.name == name {
+                                self.settings_profiles.name = "Default".to_string();
                             }
-                            self.available_settings_profiles = crate::settings_profile::all_settings_profiles();
-                            if self.settings_profile_manager_index >= self.available_settings_profiles.len() {
-                                self.settings_profile_manager_index = self.available_settings_profiles.len().saturating_sub(1);
+                            self.settings_profiles.available = crate::settings_profile::all_settings_profiles();
+                            if self.settings_profiles.index >= self.settings_profiles.available.len() {
+                                self.settings_profiles.index = self.settings_profiles.available.len().saturating_sub(1);
                             }
                             self.save_settings();
                             self.status_message = format!("Deleted profile: {name}");
@@ -1322,7 +1177,7 @@ impl App {
                 }
             }
             KeyCode::Esc | KeyCode::Char('q') => {
-                self.show_settings_profile_manager = false;
+                self.settings_profiles.show = false;
                 self.fire_deferred_settings_hooks();
             }
             _ => {}
@@ -1339,22 +1194,22 @@ impl App {
         };
         match classify_list_key(code, false) {
             ListKeyAction::Down => {
-                if self.theme_index < self.available_themes.len().saturating_sub(1) {
-                    self.theme_index += 1;
+                if self.theme_picker.index < self.theme_picker.available_themes.len().saturating_sub(1) {
+                    self.theme_picker.index += 1;
                 }
             }
             ListKeyAction::Up => {
-                self.theme_index = self.theme_index.saturating_sub(1);
+                self.theme_picker.index = self.theme_picker.index.saturating_sub(1);
             }
             ListKeyAction::Select => {
-                if let Some(selected) = self.available_themes.get(self.theme_index) {
+                if let Some(selected) = self.theme_picker.available_themes.get(self.theme_picker.index) {
                     self.theme = selected.clone();
                     self.save_settings();
                 }
-                self.show_theme_picker = false;
+                self.theme_picker.show = false;
             }
             ListKeyAction::Close => {
-                self.show_theme_picker = false;
+                self.theme_picker.show = false;
             }
             _ => {}
         }
@@ -1362,35 +1217,35 @@ impl App {
 
     /// Handle a key press while the keybindings overlay is open.
     pub fn handle_keybindings_key(&mut self, code: KeyCode) {
-        if self.keybindings_profile_picker {
+        if self.keybindings_overlay.profile_picker {
             match code {
                 KeyCode::Char('j') | KeyCode::Down => {
-                    if self.keybindings_profile_index < self.available_kb_profiles.len().saturating_sub(1) {
-                        self.keybindings_profile_index += 1;
+                    if self.keybindings_overlay.profile_index < self.keybindings_overlay.available_profiles.len().saturating_sub(1) {
+                        self.keybindings_overlay.profile_index += 1;
                     }
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
-                    self.keybindings_profile_index = self.keybindings_profile_index.saturating_sub(1);
+                    self.keybindings_overlay.profile_index = self.keybindings_overlay.profile_index.saturating_sub(1);
                 }
                 KeyCode::Char(' ') | KeyCode::Enter => {
-                    if let Some(name) = self.available_kb_profiles.get(self.keybindings_profile_index) {
+                    if let Some(name) = self.keybindings_overlay.available_profiles.get(self.keybindings_overlay.profile_index) {
                         let mut kb = keybindings::find_profile(name);
                         let overrides = keybindings::load_overrides();
                         kb.apply_overrides(&overrides);
                         self.keybindings = kb;
                         self.save_settings();
                     }
-                    self.keybindings_profile_picker = false;
+                    self.keybindings_overlay.profile_picker = false;
                 }
                 KeyCode::Esc => {
-                    self.keybindings_profile_picker = false;
+                    self.keybindings_overlay.profile_picker = false;
                 }
                 _ => {}
             }
             return;
         }
 
-        if let Some((displaced_action, _combo)) = self.keybindings_conflict.take() {
+        if let Some((displaced_action, _combo)) = self.keybindings_overlay.conflict.take() {
             match code {
                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                     // Accept: the displaced action loses its binding
@@ -1398,7 +1253,7 @@ impl App {
                 }
                 _ => {
                     // Undo the rebind — restore both
-                    let (mode, action) = self.keybindings_overlay_item(self.keybindings_index);
+                    let (mode, action) = self.keybindings_overlay_item(self.keybindings_overlay.index);
                     if let Some(action) = action {
                         self.keybindings.reset_action(mode, action);
                         self.keybindings.reset_action(mode, displaced_action);
@@ -1412,46 +1267,46 @@ impl App {
         let total = self.keybindings_overlay_total();
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
-                if self.keybindings_index < total.saturating_sub(1) {
-                    self.keybindings_index += 1;
+                if self.keybindings_overlay.index < total.saturating_sub(1) {
+                    self.keybindings_overlay.index += 1;
                 }
                 // Skip section headers
-                while self.keybindings_index < total && self.keybindings_overlay_item(self.keybindings_index).1.is_none() {
-                    self.keybindings_index += 1;
+                while self.keybindings_overlay.index < total && self.keybindings_overlay_item(self.keybindings_overlay.index).1.is_none() {
+                    self.keybindings_overlay.index += 1;
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.keybindings_index = self.keybindings_index.saturating_sub(1);
+                self.keybindings_overlay.index = self.keybindings_overlay.index.saturating_sub(1);
                 // Skip section headers (index 0 is the profile row — always selectable)
-                while self.keybindings_index > 0 && self.keybindings_overlay_item(self.keybindings_index).1.is_none() {
-                    self.keybindings_index = self.keybindings_index.saturating_sub(1);
+                while self.keybindings_overlay.index > 0 && self.keybindings_overlay_item(self.keybindings_overlay.index).1.is_none() {
+                    self.keybindings_overlay.index = self.keybindings_overlay.index.saturating_sub(1);
                 }
             }
             KeyCode::Enter => {
-                if self.keybindings_index == 0 {
+                if self.keybindings_overlay.index == 0 {
                     // Profile row → open profile picker
-                    self.keybindings_profile_picker = true;
-                    self.keybindings_profile_index = self.available_kb_profiles.iter()
+                    self.keybindings_overlay.profile_picker = true;
+                    self.keybindings_overlay.profile_index = self.keybindings_overlay.available_profiles.iter()
                         .position(|n| *n == self.keybindings.profile_name)
                         .unwrap_or(0);
                 } else {
-                    let (_, action) = self.keybindings_overlay_item(self.keybindings_index);
+                    let (_, action) = self.keybindings_overlay_item(self.keybindings_overlay.index);
                     if action.is_some() {
-                        self.keybindings_capturing = true;
+                        self.keybindings_overlay.capturing = true;
                         self.status_message = "Press a key combo...".to_string();
                     }
                 }
             }
             KeyCode::Backspace => {
                 // Reset to profile default
-                let (mode, action) = self.keybindings_overlay_item(self.keybindings_index);
+                let (mode, action) = self.keybindings_overlay_item(self.keybindings_overlay.index);
                 if let Some(action) = action {
                     self.keybindings.reset_action(mode, action);
                     self.status_message = format!("Reset {}", keybindings::action_label(action));
                 }
             }
             KeyCode::Esc | KeyCode::Char('q') => {
-                self.show_keybindings = false;
+                self.keybindings_overlay.show = false;
                 self.save_settings();
             }
             _ => {}
@@ -1461,14 +1316,14 @@ impl App {
     /// Handle keybinding capture: intercepts ALL keys when capturing a new binding.
     pub fn handle_keybinding_capture(&mut self, modifiers: KeyModifiers, code: KeyCode) {
         if code == KeyCode::Esc && modifiers == KeyModifiers::NONE {
-            self.keybindings_capturing = false;
+            self.keybindings_overlay.capturing = false;
             self.status_message.clear();
             return;
         }
 
-        let (mode, action) = self.keybindings_overlay_item(self.keybindings_index);
+        let (mode, action) = self.keybindings_overlay_item(self.keybindings_overlay.index);
         let Some(action) = action else {
-            self.keybindings_capturing = false;
+            self.keybindings_overlay.capturing = false;
             return;
         };
 
@@ -1480,7 +1335,7 @@ impl App {
         };
         let combo = keybindings::KeyCombo { modifiers, code };
         let displaced = self.keybindings.rebind(mode, action, combo.clone());
-        self.keybindings_capturing = false;
+        self.keybindings_overlay.capturing = false;
 
         if let Some(displaced_action) = displaced {
             if displaced_action != action {
@@ -1489,7 +1344,7 @@ impl App {
                     keybindings::format_key_combo(&combo),
                     keybindings::action_label(displaced_action)
                 );
-                self.keybindings_conflict = Some((displaced_action, combo));
+                self.keybindings_overlay.conflict = Some((displaced_action, combo));
                 return;
             }
         }
@@ -1540,7 +1395,7 @@ impl App {
 
     /// Build the filtered contacts list from contact_names using the current filter.
     pub fn refresh_contacts_filter(&mut self) {
-        let filter_lower = self.contacts_filter.to_lowercase();
+        let filter_lower = self.contacts_overlay.filter.to_lowercase();
         let mut contacts: Vec<(String, String)> = self
             .contact_names
             .iter()
@@ -1555,8 +1410,8 @@ impl App {
             .map(|(number, name)| (number.clone(), name.clone()))
             .collect();
         contacts.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
-        self.contacts_filtered = contacts;
-        list_overlay::clamp_index(&mut self.contacts_index, self.contacts_filtered.len());
+        self.contacts_overlay.filtered = contacts;
+        list_overlay::clamp_index(&mut self.contacts_overlay.index, self.contacts_overlay.filtered.len());
     }
 
     /// Build the list of available group menu actions (context-dependent).
@@ -1581,7 +1436,7 @@ impl App {
 
     /// Build filtered contacts list for the "Add member" picker (excludes existing group members).
     pub fn refresh_group_add_filter(&mut self) {
-        let filter_lower = self.group_menu_filter.to_lowercase();
+        let filter_lower = self.group_menu.filter.to_lowercase();
         let existing_members: HashSet<&str> = self.active_conversation.as_ref()
             .and_then(|id| self.groups.get(id))
             .map(|g| g.members.iter().map(|s| s.as_str()).collect())
@@ -1601,17 +1456,17 @@ impl App {
             .map(|(number, name)| (number.clone(), name.clone()))
             .collect();
         contacts.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
-        self.group_menu_filtered = contacts;
-        if self.group_menu_filtered.is_empty() {
-            self.group_menu_index = 0;
-        } else if self.group_menu_index >= self.group_menu_filtered.len() {
-            self.group_menu_index = self.group_menu_filtered.len() - 1;
+        self.group_menu.filtered = contacts;
+        if self.group_menu.filtered.is_empty() {
+            self.group_menu.index = 0;
+        } else if self.group_menu.index >= self.group_menu.filtered.len() {
+            self.group_menu.index = self.group_menu.filtered.len() - 1;
         }
     }
 
     /// Build filtered member list for the "Remove member" picker (excludes self).
     pub fn refresh_group_remove_filter(&mut self) {
-        let filter_lower = self.group_menu_filter.to_lowercase();
+        let filter_lower = self.group_menu.filter.to_lowercase();
         let members: Vec<String> = self.active_conversation.as_ref()
             .and_then(|id| self.groups.get(id))
             .map(|g| g.members.clone())
@@ -1634,32 +1489,32 @@ impl App {
             })
             .collect();
         result.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
-        self.group_menu_filtered = result;
-        if self.group_menu_filtered.is_empty() {
-            self.group_menu_index = 0;
-        } else if self.group_menu_index >= self.group_menu_filtered.len() {
-            self.group_menu_index = self.group_menu_filtered.len() - 1;
+        self.group_menu.filtered = result;
+        if self.group_menu.filtered.is_empty() {
+            self.group_menu.index = 0;
+        } else if self.group_menu.index >= self.group_menu.filtered.len() {
+            self.group_menu.index = self.group_menu.filtered.len() - 1;
         }
     }
 
     /// Handle a key press while the group management menu is open.
     pub fn handle_group_menu_key(&mut self, code: KeyCode) -> Option<SendRequest> {
-        let state = self.group_menu_state.clone()?;
+        let state = self.group_menu.state.clone()?;
         match state {
             GroupMenuState::Menu => {
                 let items = self.group_menu_items();
                 let item_count = items.len();
                 match code {
                     KeyCode::Char('j') | KeyCode::Down => {
-                        if self.group_menu_index < item_count.saturating_sub(1) {
-                            self.group_menu_index += 1;
+                        if self.group_menu.index < item_count.saturating_sub(1) {
+                            self.group_menu.index += 1;
                         }
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
-                        self.group_menu_index = self.group_menu_index.saturating_sub(1);
+                        self.group_menu.index = self.group_menu.index.saturating_sub(1);
                     }
                     KeyCode::Enter => {
-                        if let Some(action) = items.get(self.group_menu_index) {
+                        if let Some(action) = items.get(self.group_menu.index) {
                             self.transition_group_menu(action.key_hint);
                         }
                     }
@@ -1674,26 +1529,26 @@ impl App {
                         }
                     }
                     KeyCode::Esc => {
-                        self.group_menu_state = None;
+                        self.group_menu.state = None;
                     }
                     _ => {}
                 }
                 None
             }
             GroupMenuState::Members => {
-                let member_count = self.group_menu_filtered.len();
+                let member_count = self.group_menu.filtered.len();
                 match code {
                     KeyCode::Char('j') | KeyCode::Down => {
-                        if self.group_menu_index < member_count.saturating_sub(1) {
-                            self.group_menu_index += 1;
+                        if self.group_menu.index < member_count.saturating_sub(1) {
+                            self.group_menu.index += 1;
                         }
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
-                        self.group_menu_index = self.group_menu_index.saturating_sub(1);
+                        self.group_menu.index = self.group_menu.index.saturating_sub(1);
                     }
                     KeyCode::Esc => {
-                        self.group_menu_state = Some(GroupMenuState::Menu);
-                        self.group_menu_index = 0;
+                        self.group_menu.state = Some(GroupMenuState::Menu);
+                        self.group_menu.index = 0;
                     }
                     _ => {}
                 }
@@ -1702,21 +1557,21 @@ impl App {
             GroupMenuState::AddMember => {
                 match code {
                     KeyCode::Char('j') | KeyCode::Down => {
-                        if !self.group_menu_filtered.is_empty()
-                            && self.group_menu_index < self.group_menu_filtered.len() - 1
+                        if !self.group_menu.filtered.is_empty()
+                            && self.group_menu.index < self.group_menu.filtered.len() - 1
                         {
-                            self.group_menu_index += 1;
+                            self.group_menu.index += 1;
                         }
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
-                        self.group_menu_index = self.group_menu_index.saturating_sub(1);
+                        self.group_menu.index = self.group_menu.index.saturating_sub(1);
                     }
                     KeyCode::Enter => {
-                        if let Some((phone, _)) = self.group_menu_filtered.get(self.group_menu_index) {
+                        if let Some((phone, _)) = self.group_menu.filtered.get(self.group_menu.index) {
                             let phone = phone.clone();
                             let group_id = self.active_conversation.clone()?;
-                            self.group_menu_state = None;
-                            self.group_menu_filter.clear();
+                            self.group_menu.state = None;
+                            self.group_menu.filter.clear();
                             return Some(SendRequest::AddGroupMembers {
                                 group_id,
                                 members: vec![phone],
@@ -1724,18 +1579,18 @@ impl App {
                         }
                     }
                     KeyCode::Esc => {
-                        self.group_menu_state = Some(GroupMenuState::Menu);
-                        self.group_menu_index = 0;
-                        self.group_menu_filter.clear();
+                        self.group_menu.state = Some(GroupMenuState::Menu);
+                        self.group_menu.index = 0;
+                        self.group_menu.filter.clear();
                     }
                     KeyCode::Backspace => {
-                        self.group_menu_filter.pop();
-                        self.group_menu_index = 0;
+                        self.group_menu.filter.pop();
+                        self.group_menu.index = 0;
                         self.refresh_group_add_filter();
                     }
                     KeyCode::Char(c) if c != 'j' && c != 'k' => {
-                        self.group_menu_filter.push(c);
-                        self.group_menu_index = 0;
+                        self.group_menu.filter.push(c);
+                        self.group_menu.index = 0;
                         self.refresh_group_add_filter();
                     }
                     _ => {}
@@ -1745,21 +1600,21 @@ impl App {
             GroupMenuState::RemoveMember => {
                 match code {
                     KeyCode::Char('j') | KeyCode::Down => {
-                        if !self.group_menu_filtered.is_empty()
-                            && self.group_menu_index < self.group_menu_filtered.len() - 1
+                        if !self.group_menu.filtered.is_empty()
+                            && self.group_menu.index < self.group_menu.filtered.len() - 1
                         {
-                            self.group_menu_index += 1;
+                            self.group_menu.index += 1;
                         }
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
-                        self.group_menu_index = self.group_menu_index.saturating_sub(1);
+                        self.group_menu.index = self.group_menu.index.saturating_sub(1);
                     }
                     KeyCode::Enter => {
-                        if let Some((phone, _)) = self.group_menu_filtered.get(self.group_menu_index) {
+                        if let Some((phone, _)) = self.group_menu.filtered.get(self.group_menu.index) {
                             let phone = phone.clone();
                             let group_id = self.active_conversation.clone()?;
-                            self.group_menu_state = None;
-                            self.group_menu_filter.clear();
+                            self.group_menu.state = None;
+                            self.group_menu.filter.clear();
                             return Some(SendRequest::RemoveGroupMembers {
                                 group_id,
                                 members: vec![phone],
@@ -1767,18 +1622,18 @@ impl App {
                         }
                     }
                     KeyCode::Esc => {
-                        self.group_menu_state = Some(GroupMenuState::Menu);
-                        self.group_menu_index = 0;
-                        self.group_menu_filter.clear();
+                        self.group_menu.state = Some(GroupMenuState::Menu);
+                        self.group_menu.index = 0;
+                        self.group_menu.filter.clear();
                     }
                     KeyCode::Backspace => {
-                        self.group_menu_filter.pop();
-                        self.group_menu_index = 0;
+                        self.group_menu.filter.pop();
+                        self.group_menu.index = 0;
                         self.refresh_group_remove_filter();
                     }
                     KeyCode::Char(c) if c != 'j' && c != 'k' => {
-                        self.group_menu_filter.push(c);
-                        self.group_menu_index = 0;
+                        self.group_menu.filter.push(c);
+                        self.group_menu.index = 0;
                         self.refresh_group_remove_filter();
                     }
                     _ => {}
@@ -1788,24 +1643,24 @@ impl App {
             GroupMenuState::Rename => {
                 match code {
                     KeyCode::Enter => {
-                        let name = self.group_menu_input.trim().to_string();
+                        let name = self.group_menu.input.trim().to_string();
                         if !name.is_empty() {
                             let group_id = self.active_conversation.clone()?;
-                            self.group_menu_state = None;
-                            self.group_menu_input.clear();
+                            self.group_menu.state = None;
+                            self.group_menu.input.clear();
                             return Some(SendRequest::RenameGroup { group_id, name });
                         }
                     }
                     KeyCode::Esc => {
-                        self.group_menu_state = Some(GroupMenuState::Menu);
-                        self.group_menu_index = 0;
-                        self.group_menu_input.clear();
+                        self.group_menu.state = Some(GroupMenuState::Menu);
+                        self.group_menu.index = 0;
+                        self.group_menu.input.clear();
                     }
                     KeyCode::Backspace => {
-                        self.group_menu_input.pop();
+                        self.group_menu.input.pop();
                     }
                     KeyCode::Char(c) => {
-                        self.group_menu_input.push(c);
+                        self.group_menu.input.push(c);
                     }
                     _ => {}
                 }
@@ -1814,22 +1669,22 @@ impl App {
             GroupMenuState::Create => {
                 match code {
                     KeyCode::Enter => {
-                        let name = self.group_menu_input.trim().to_string();
+                        let name = self.group_menu.input.trim().to_string();
                         if !name.is_empty() {
-                            self.group_menu_state = None;
-                            self.group_menu_input.clear();
+                            self.group_menu.state = None;
+                            self.group_menu.input.clear();
                             return Some(SendRequest::CreateGroup { name });
                         }
                     }
                     KeyCode::Esc => {
-                        self.group_menu_state = None;
-                        self.group_menu_input.clear();
+                        self.group_menu.state = None;
+                        self.group_menu.input.clear();
                     }
                     KeyCode::Backspace => {
-                        self.group_menu_input.pop();
+                        self.group_menu.input.pop();
                     }
                     KeyCode::Char(c) => {
-                        self.group_menu_input.push(c);
+                        self.group_menu.input.push(c);
                     }
                     _ => {}
                 }
@@ -1839,12 +1694,12 @@ impl App {
                 match code {
                     KeyCode::Char('y') => {
                         let group_id = self.active_conversation.clone()?;
-                        self.group_menu_state = None;
+                        self.group_menu.state = None;
                         return Some(SendRequest::LeaveGroup { group_id });
                     }
                     KeyCode::Char('n') | KeyCode::Esc => {
-                        self.group_menu_state = Some(GroupMenuState::Menu);
-                        self.group_menu_index = 0;
+                        self.group_menu.state = Some(GroupMenuState::Menu);
+                        self.group_menu.index = 0;
                     }
                     _ => {}
                 }
@@ -1855,9 +1710,9 @@ impl App {
 
     /// Transition from the top-level group menu to a sub-state.
     fn transition_group_menu(&mut self, hint: &str) {
-        self.group_menu_index = 0;
-        self.group_menu_filter.clear();
-        self.group_menu_input.clear();
+        self.group_menu.index = 0;
+        self.group_menu.filter.clear();
+        self.group_menu.input.clear();
         match hint {
             "m" => {
                 // Populate member list for display
@@ -1870,16 +1725,16 @@ impl App {
                         (phone.clone(), name)
                     }).collect())
                     .unwrap_or_default();
-                self.group_menu_filtered = members;
-                self.group_menu_state = Some(GroupMenuState::Members);
+                self.group_menu.filtered = members;
+                self.group_menu.state = Some(GroupMenuState::Members);
             }
             "a" => {
                 self.refresh_group_add_filter();
-                self.group_menu_state = Some(GroupMenuState::AddMember);
+                self.group_menu.state = Some(GroupMenuState::AddMember);
             }
             "r" => {
                 self.refresh_group_remove_filter();
-                self.group_menu_state = Some(GroupMenuState::RemoveMember);
+                self.group_menu.state = Some(GroupMenuState::RemoveMember);
             }
             "n" => {
                 // Pre-fill with current group name
@@ -1887,14 +1742,14 @@ impl App {
                     .and_then(|id| self.conversations.get(id))
                     .map(|c| c.name.clone())
                     .unwrap_or_default();
-                self.group_menu_input = name;
-                self.group_menu_state = Some(GroupMenuState::Rename);
+                self.group_menu.input = name;
+                self.group_menu.state = Some(GroupMenuState::Rename);
             }
             "l" => {
-                self.group_menu_state = Some(GroupMenuState::LeaveConfirm);
+                self.group_menu.state = Some(GroupMenuState::LeaveConfirm);
             }
             "c" => {
-                self.group_menu_state = Some(GroupMenuState::Create);
+                self.group_menu.state = Some(GroupMenuState::Create);
             }
             _ => {}
         }
@@ -1949,31 +1804,31 @@ impl App {
     fn handle_reaction_picker_key(&mut self, code: KeyCode) -> Option<SendRequest> {
         match code {
             KeyCode::Char('h') | KeyCode::Left => {
-                self.reaction_picker_index = self.reaction_picker_index.saturating_sub(1);
+                self.reactions.picker_index = self.reactions.picker_index.saturating_sub(1);
                 None
             }
             KeyCode::Char('l') | KeyCode::Right => {
-                if self.reaction_picker_index < QUICK_REACTIONS.len() - 1 {
-                    self.reaction_picker_index += 1;
+                if self.reactions.picker_index < QUICK_REACTIONS.len() - 1 {
+                    self.reactions.picker_index += 1;
                 }
                 None
             }
             KeyCode::Char(c @ '1'..='8') => {
                 let idx = (c as u8 - b'1') as usize;
                 if idx < QUICK_REACTIONS.len() {
-                    self.reaction_picker_index = idx;
-                    self.show_reaction_picker = false;
+                    self.reactions.picker_index = idx;
+                    self.reactions.show_picker = false;
                     self.prepare_reaction_send()
                 } else {
                     None
                 }
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
-                self.show_reaction_picker = false;
+                self.reactions.show_picker = false;
                 self.prepare_reaction_send()
             }
             KeyCode::Esc => {
-                self.show_reaction_picker = false;
+                self.reactions.show_picker = false;
                 None
             }
             _ => None,
@@ -1983,7 +1838,7 @@ impl App {
     /// Build a SendRequest::Reaction from the current picker selection and focused message.
     /// If the user already reacted with the same emoji, removes it instead (toggle behavior).
     fn prepare_reaction_send(&mut self) -> Option<SendRequest> {
-        let emoji = QUICK_REACTIONS.get(self.reaction_picker_index)?.to_string();
+        let emoji = QUICK_REACTIONS.get(self.reactions.picker_index)?.to_string();
         let conv_id = self.active_conversation.clone()?;
         let conv = self.conversations.get(&conv_id)?;
         let is_group = conv.is_group;
@@ -2127,33 +1982,33 @@ impl App {
     pub fn handle_action_menu_key(&mut self, code: KeyCode) -> Option<SendRequest> {
         let item_count = self.action_menu_items().len();
         if item_count == 0 {
-            self.show_action_menu = false;
+            self.action_menu.show = false;
             return None;
         }
         match classify_list_key(code, false) {
             ListKeyAction::Down => {
-                if self.action_menu_index < item_count - 1 {
-                    self.action_menu_index += 1;
+                if self.action_menu.index < item_count - 1 {
+                    self.action_menu.index += 1;
                 }
                 None
             }
             ListKeyAction::Up => {
-                self.action_menu_index = self.action_menu_index.saturating_sub(1);
+                self.action_menu.index = self.action_menu.index.saturating_sub(1);
                 None
             }
             ListKeyAction::Select => {
                 let items = self.action_menu_items();
-                if let Some(action) = items.get(self.action_menu_index) {
+                if let Some(action) = items.get(self.action_menu.index) {
                     let hint = action.key_hint;
-                    self.show_action_menu = false;
+                    self.action_menu.show = false;
                     self.execute_action_by_hint(hint)
                 } else {
-                    self.show_action_menu = false;
+                    self.action_menu.show = false;
                     None
                 }
             }
             ListKeyAction::Close => {
-                self.show_action_menu = false;
+                self.action_menu.show = false;
                 None
             }
             ListKeyAction::None => {
@@ -2174,7 +2029,7 @@ impl App {
                     // Only execute if this action is available in the menu
                     let items = self.action_menu_items();
                     if items.iter().any(|a| a.key_hint == hint) {
-                        self.show_action_menu = false;
+                        self.action_menu.show = false;
                         self.execute_action_by_hint(hint)
                     } else {
                         None
@@ -2233,8 +2088,8 @@ impl App {
             "r" => {
                 // React — open reaction picker
                 if self.selected_message().is_some_and(|m| !m.is_system) {
-                    self.show_reaction_picker = true;
-                    self.reaction_picker_index = 0;
+                    self.reactions.show_picker = true;
+                    self.reactions.picker_index = 0;
                 }
                 None
             }
@@ -2242,7 +2097,7 @@ impl App {
                 // Forward — open conversation picker
                 if let Some(msg) = self.selected_message() {
                     if !msg.is_system && !msg.is_deleted {
-                        self.forward_body = msg.body.clone();
+                        self.forward.body = msg.body.clone();
                         self.open_forward_picker();
                     }
                 }
@@ -2282,7 +2137,7 @@ impl App {
                             let allow_multiple = poll.allow_multiple;
                             let poll_timestamp = msg.timestamp_ms;
                             let option_count = options.len();
-                            self.poll_vote_pending = Some(PollVotePending {
+                            self.poll_vote.pending = Some(PollVotePending {
                                 conv_id,
                                 is_group,
                                 poll_author,
@@ -2290,9 +2145,9 @@ impl App {
                                 allow_multiple,
                                 options,
                             });
-                            self.poll_vote_selections = vec![false; option_count];
-                            self.poll_vote_index = 0;
-                            self.show_poll_vote = true;
+                            self.poll_vote.selections = vec![false; option_count];
+                            self.poll_vote.index = 0;
+                            self.poll_vote.show = true;
                         }
                     }
                 }
@@ -2331,60 +2186,60 @@ impl App {
     pub fn handle_verify_key(&mut self, code: KeyCode) -> Option<SendRequest> {
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
-                self.verify_confirming = false;
-                if !self.verify_identities.is_empty()
-                    && self.verify_index < self.verify_identities.len() - 1
+                self.verify.confirming = false;
+                if !self.verify.identities.is_empty()
+                    && self.verify.index < self.verify.identities.len() - 1
                 {
-                    self.verify_index += 1;
+                    self.verify.index += 1;
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.verify_confirming = false;
-                if self.verify_index > 0 {
-                    self.verify_index -= 1;
+                self.verify.confirming = false;
+                if self.verify.index > 0 {
+                    self.verify.index -= 1;
                 }
             }
             KeyCode::Char('v') | KeyCode::Enter => {
-                if let Some(id) = self.verify_identities.get(self.verify_index) {
+                if let Some(id) = self.verify.identities.get(self.verify.index) {
                     if id.safety_number.is_empty() {
                         self.status_message = "Safety number not available — cannot verify".to_string();
                         return None;
                     }
-                    if self.verify_confirming {
+                    if self.verify.confirming {
                         // Second press: actually trust with the specific safety number
                         if let Some(ref number) = id.number {
                             let recipient = number.clone();
                             let safety_number = id.safety_number.clone();
-                            self.verify_confirming = false;
+                            self.verify.confirming = false;
                             return Some(SendRequest::TrustIdentity { recipient, safety_number });
                         }
                     } else {
                         // First press: ask for confirmation
-                        self.verify_confirming = true;
+                        self.verify.confirming = true;
                     }
                 }
             }
             KeyCode::Esc => {
-                self.verify_confirming = false;
-                self.show_verify = false;
+                self.verify.confirming = false;
+                self.verify.show = false;
             }
             _ => {
-                self.verify_confirming = false;
+                self.verify.confirming = false;
             }
         }
         None
     }
 
     fn open_forward_picker(&mut self) {
-        self.show_forward = true;
-        self.forward_index = 0;
-        self.forward_filter.clear();
+        self.forward.show = true;
+        self.forward.index = 0;
+        self.forward.filter.clear();
         self.update_forward_filter();
     }
 
     fn update_forward_filter(&mut self) {
-        let filter = self.forward_filter.to_lowercase();
-        self.forward_filtered = self.conversation_order.iter()
+        let filter = self.forward.filter.to_lowercase();
+        self.forward.filtered = self.conversation_order.iter()
             .filter_map(|id| {
                 let conv = self.conversations.get(id)?;
                 if !conv.accepted { return None; }
@@ -2398,27 +2253,27 @@ impl App {
                 }
             })
             .collect();
-        list_overlay::clamp_index(&mut self.forward_index, self.forward_filtered.len());
+        list_overlay::clamp_index(&mut self.forward.index, self.forward.filtered.len());
     }
 
     pub fn handle_forward_key(&mut self, code: KeyCode) -> Option<SendRequest> {
         match classify_list_key(code, true) {
             ListKeyAction::Down => {
-                if !self.forward_filtered.is_empty()
-                    && self.forward_index < self.forward_filtered.len() - 1
+                if !self.forward.filtered.is_empty()
+                    && self.forward.index < self.forward.filtered.len() - 1
                 {
-                    self.forward_index += 1;
+                    self.forward.index += 1;
                 }
             }
             ListKeyAction::Up => {
-                self.forward_index = self.forward_index.saturating_sub(1);
+                self.forward.index = self.forward.index.saturating_sub(1);
             }
             ListKeyAction::Select => {
-                if let Some((conv_id, name)) = self.forward_filtered.get(self.forward_index).cloned() {
+                if let Some((conv_id, name)) = self.forward.filtered.get(self.forward.index).cloned() {
                     let is_group = self.conversations.get(&conv_id).map(|c| c.is_group).unwrap_or(false);
-                    let body = format!("[Forwarded]\n{}", self.forward_body);
+                    let body = format!("[Forwarded]\n{}", self.forward.body);
                     let local_ts_ms = chrono::Utc::now().timestamp_millis();
-                    self.show_forward = false;
+                    self.forward.show = false;
                     self.status_message = format!("Forwarded to {name}");
                     self.move_conversation_to_top(&conv_id);
                     return Some(SendRequest::Message {
@@ -2435,16 +2290,16 @@ impl App {
                 }
             }
             ListKeyAction::Close => {
-                self.show_forward = false;
+                self.forward.show = false;
             }
             ListKeyAction::FilterPush(c) => {
                 if !c.is_control() {
-                    self.forward_filter.push(c);
+                    self.forward.filter.push(c);
                     self.update_forward_filter();
                 }
             }
             ListKeyAction::FilterPop => {
-                self.forward_filter.pop();
+                self.forward.filter.pop();
                 self.update_forward_filter();
             }
             ListKeyAction::None => {}
@@ -2455,33 +2310,33 @@ impl App {
     pub fn handle_contacts_key(&mut self, code: KeyCode) {
         match classify_list_key(code, true) {
             ListKeyAction::Down => {
-                if !self.contacts_filtered.is_empty()
-                    && self.contacts_index < self.contacts_filtered.len() - 1
+                if !self.contacts_overlay.filtered.is_empty()
+                    && self.contacts_overlay.index < self.contacts_overlay.filtered.len() - 1
                 {
-                    self.contacts_index += 1;
+                    self.contacts_overlay.index += 1;
                 }
             }
             ListKeyAction::Up => {
-                self.contacts_index = self.contacts_index.saturating_sub(1);
+                self.contacts_overlay.index = self.contacts_overlay.index.saturating_sub(1);
             }
             ListKeyAction::Select => {
-                if let Some((number, _)) = self.contacts_filtered.get(self.contacts_index) {
+                if let Some((number, _)) = self.contacts_overlay.filtered.get(self.contacts_overlay.index) {
                     let number = number.clone();
-                    self.show_contacts = false;
-                    self.contacts_filter.clear();
+                    self.contacts_overlay.show = false;
+                    self.contacts_overlay.filter.clear();
                     self.join_conversation(&number);
                 }
             }
             ListKeyAction::Close => {
-                self.show_contacts = false;
-                self.contacts_filter.clear();
+                self.contacts_overlay.show = false;
+                self.contacts_overlay.filter.clear();
             }
             ListKeyAction::FilterPush(c) => {
-                self.contacts_filter.push(c);
+                self.contacts_overlay.filter.push(c);
                 self.refresh_contacts_filter();
             }
             ListKeyAction::FilterPop => {
-                self.contacts_filter.pop();
+                self.contacts_overlay.filter.pop();
                 self.refresh_contacts_filter();
             }
             ListKeyAction::None => {}
@@ -2690,13 +2545,7 @@ impl App {
             db,
             connection_error: None,
             contact_names: HashMap::new(),
-            pending_bell: false,
-            notify_direct: true,
-            notify_group: true,
-            desktop_notifications: false,
-            notification_preview: "full".to_string(),
-            clipboard_clear_seconds: 30,
-            clipboard_set_at: None,
+            notifications: NotificationState::new(),
             muted_conversations: HashSet::new(),
             blocked_conversations: HashSet::new(),
             autocomplete_visible: false,
@@ -2705,25 +2554,10 @@ impl App {
             show_settings: false,
             settings_index: 0,
             show_help: false,
-            show_contacts: false,
-            contacts_index: 0,
-            contacts_filter: String::new(),
-            contacts_filtered: Vec::new(),
-            show_verify: false,
-            verify_index: 0,
-            verify_identities: Vec::new(),
+            contacts_overlay: ContactsOverlayState::default(),
+            verify: VerifyOverlayState::default(),
             identity_trust: HashMap::new(),
-            verify_confirming: false,
-            image_mode: "halfblock".to_string(),
-            show_link_previews: true,
-            link_regions: Vec::new(),
-            link_url_map: HashMap::new(),
-            image_protocol: image_render::detect_protocol(),
-            cell_px: image_render::detect_cell_pixel_size(),
-            visible_images: Vec::new(),
-            prev_visible_images: Vec::new(),
-            sixel_prev_scroll: 0,
-            native_image_cache: HashMap::new(),
+            image: ImageState::new(image_render_tx, image_render_rx),
             prev_active_conversation: None,
             incognito: false,
             has_more_messages: HashSet::new(),
@@ -2737,11 +2571,7 @@ impl App {
             focused_message_time: None,
             focused_msg_index: None,
             jump_stack: Vec::new(),
-            show_reaction_picker: false,
-            reaction_picker_index: 0,
-            emoji_to_text: false,
-            show_reactions: true,
-            reaction_verbose: false,
+            reactions: ReactionState::new(),
             groups: HashMap::new(),
             uuid_to_name: HashMap::new(),
             number_to_uuid: HashMap::new(),
@@ -2773,18 +2603,9 @@ impl App {
             pending_typing_stop: None,
             send_read_receipts: true,
             pending_read_receipts: Vec::new(),
-            show_action_menu: false,
-            action_menu_index: 0,
-            show_forward: false,
-            forward_index: 0,
-            forward_filter: String::new(),
-            forward_filtered: Vec::new(),
-            forward_body: String::new(),
-            group_menu_state: None,
-            group_menu_index: 0,
-            group_menu_filter: String::new(),
-            group_menu_filtered: Vec::new(),
-            group_menu_input: String::new(),
+            action_menu: ActionMenuState::default(),
+            forward: ForwardOverlayState::default(),
+            group_menu: GroupMenuOverlayState::default(),
             show_message_request: false,
             mouse_sidebar_inner: None,
             mouse_messages_area: Rect::default(),
@@ -2793,48 +2614,25 @@ impl App {
             mouse_enabled: true,
             pending_mouse_toggle: None,
             theme: theme::default_theme(),
-            show_theme_picker: false,
-            theme_index: 0,
-            available_themes: theme::all_themes(),
+            theme_picker: ThemePickerState {
+                available_themes: theme::all_themes(),
+                ..Default::default()
+            },
             keybindings: keybindings::default_profile(),
-            show_keybindings: false,
-            keybindings_index: 0,
-            keybindings_capturing: false,
-            keybindings_conflict: None,
-            keybindings_profile_picker: false,
-            keybindings_profile_index: 0,
-            available_kb_profiles: keybindings::all_profile_names(),
-            show_pin_duration: false,
-            pin_duration_index: 0,
-            pin_pending: None,
-            show_poll_vote: false,
-            poll_vote_index: 0,
-            poll_vote_selections: Vec::new(),
-            poll_vote_pending: None,
-            pending_polls: HashMap::new(),
+            keybindings_overlay: KeybindingsOverlayState {
+                available_profiles: keybindings::all_profile_names(),
+                ..Default::default()
+            },
+            pin_duration: PinDurationOverlayState::default(),
+            poll_vote: PollVoteOverlayState::default(),
             expiring_msg_count: 0,
             show_about: false,
-            show_profile: false,
-            profile_index: 0,
-            profile_editing: false,
-            profile_fields: [String::new(), String::new(), String::new(), String::new()],
-            profile_edit_buffer: String::new(),
-            next_kitty_image_id: 1,
-            kitty_image_ids: HashMap::new(),
-            kitty_transmitted: HashSet::new(),
-            kitty_pending_transmits: Vec::new(),
-            iterm2_crop_cache: HashMap::new(),
-            sixel_cache: HashMap::new(),
-            settings_profile_name: "Default".to_string(),
-            show_settings_profile_manager: false,
-            settings_profile_manager_index: 0,
-            available_settings_profiles: crate::settings_profile::all_settings_profiles(),
-            settings_profile_save_as: false,
-            settings_profile_save_as_input: String::new(),
+            profile: ProfileOverlayState::default(),
+            settings_profiles: SettingsProfileOverlayState {
+                available: crate::settings_profile::all_settings_profiles(),
+                ..Default::default()
+            },
             settings_mouse_snapshot: true,
-            image_render_tx,
-            image_render_rx,
-            image_render_in_flight: HashSet::new(),
         }
     }
 
@@ -3137,8 +2935,8 @@ impl App {
     /// sixel_cache) are preserved so switching back to a conversation doesn't
     /// re-decode images from disk. Call on conversation switch.
     pub fn clear_kitty_placements(&mut self) {
-        self.kitty_transmitted.clear();
-        self.kitty_pending_transmits.clear();
+        self.image.kitty_transmitted.clear();
+        self.image.kitty_pending_transmits.clear();
     }
 
     /// Full image state reset: clear both terminal placements and base64 caches.
@@ -3149,9 +2947,9 @@ impl App {
     /// Only screen positions change, which ratatui recomputes automatically.
     pub fn clear_kitty_state(&mut self) {
         self.clear_kitty_placements();
-        if self.image_protocol != ImageProtocol::Sixel {
-            self.native_image_cache.clear();
-            self.iterm2_crop_cache.clear();
+        if self.image.image_protocol != ImageProtocol::Sixel {
+            self.image.native_image_cache.clear();
+            self.image.iterm2_crop_cache.clear();
         }
     }
 
@@ -3226,15 +3024,15 @@ impl App {
             self.handle_sidebar_filter_key(code);
             return (true, None);
         }
-        if self.show_poll_vote {
+        if self.poll_vote.show {
             let send = self.handle_poll_vote_key(code);
             return (true, send);
         }
-        if self.show_pin_duration {
+        if self.pin_duration.show {
             let send = self.handle_pin_duration_key(code);
             return (true, send);
         }
-        if self.show_action_menu {
+        if self.action_menu.show {
             let send = self.handle_action_menu_key(code);
             return (true, send);
         }
@@ -3246,7 +3044,7 @@ impl App {
             self.handle_file_browser_key(code);
             return (true, None);
         }
-        if self.show_reaction_picker {
+        if self.reactions.show_picker {
             let send = self.handle_reaction_picker_key(code);
             return (true, send);
         }
@@ -3254,7 +3052,7 @@ impl App {
             let send = self.handle_message_request_key(code);
             return (true, send);
         }
-        if self.group_menu_state.is_some() {
+        if self.group_menu.state.is_some() {
             let send = self.handle_group_menu_key(code);
             return (true, send);
         }
@@ -3262,7 +3060,7 @@ impl App {
             self.show_about = false;
             return (true, None);
         }
-        if self.show_profile {
+        if self.profile.show {
             let send = self.handle_profile_key(code);
             return (true, send);
         }
@@ -3270,15 +3068,15 @@ impl App {
             self.show_help = false;
             return (true, None);
         }
-        if self.show_verify {
+        if self.verify.show {
             let send = self.handle_verify_key(code);
             return (true, send);
         }
-        if self.show_forward {
+        if self.forward.show {
             let send = self.handle_forward_key(code);
             return (true, send);
         }
-        if self.show_contacts {
+        if self.contacts_overlay.show {
             self.handle_contacts_key(code);
             return (true, None);
         }
@@ -3286,15 +3084,15 @@ impl App {
             self.handle_search_key(code);
             return (true, None);
         }
-        if self.show_settings_profile_manager {
+        if self.settings_profiles.show {
             self.handle_settings_profile_manager_key(code);
             return (true, None);
         }
-        if self.show_theme_picker {
+        if self.theme_picker.show {
             self.handle_theme_key(code);
             return (true, None);
         }
-        if self.show_keybindings {
+        if self.keybindings_overlay.show {
             self.handle_keybindings_key(code);
             return (true, None);
         }
@@ -3419,8 +3217,8 @@ impl App {
             Some(KeyAction::CopyAllMessages) => { self.copy_selected_message(true); None }
             Some(KeyAction::React) => {
                 if self.selected_message().is_some_and(|m| !m.is_system) {
-                    self.show_reaction_picker = true;
-                    self.reaction_picker_index = 0;
+                    self.reactions.show_picker = true;
+                    self.reactions.picker_index = 0;
                 }
                 None
             }
@@ -3464,7 +3262,7 @@ impl App {
             Some(KeyAction::ForwardMessage) => {
                 if let Some(msg) = self.selected_message() {
                     if !msg.is_system && !msg.is_deleted {
-                        self.forward_body = msg.body.clone();
+                        self.forward.body = msg.body.clone();
                         self.open_forward_picker();
                     }
                 }
@@ -3488,8 +3286,8 @@ impl App {
             }
             Some(KeyAction::OpenActionMenu) => {
                 if self.selected_message().is_some_and(|m| !m.is_system) {
-                    self.show_action_menu = true;
-                    self.action_menu_index = 0;
+                    self.action_menu.show = true;
+                    self.action_menu.index = 0;
                 }
                 None
             }
@@ -3568,8 +3366,8 @@ impl App {
             Some(KeyAction::CopyAllMessages) => { self.copy_selected_message(true); None }
             Some(KeyAction::React) => {
                 if self.selected_message().is_some_and(|m| !m.is_system) {
-                    self.show_reaction_picker = true;
-                    self.reaction_picker_index = 0;
+                    self.reactions.show_picker = true;
+                    self.reactions.picker_index = 0;
                 }
                 None
             }
@@ -3611,7 +3409,7 @@ impl App {
             Some(KeyAction::ForwardMessage) => {
                 if let Some(msg) = self.selected_message() {
                     if !msg.is_system && !msg.is_deleted {
-                        self.forward_body = msg.body.clone();
+                        self.forward.body = msg.body.clone();
                         self.open_forward_picker();
                     }
                 }
@@ -3635,8 +3433,8 @@ impl App {
             }
             Some(KeyAction::OpenActionMenu) => {
                 if self.selected_message().is_some_and(|m| !m.is_system) {
-                    self.show_action_menu = true;
-                    self.action_menu_index = 0;
+                    self.action_menu.show = true;
+                    self.action_menu.index = 0;
                 }
                 None
             }
@@ -3893,7 +3691,7 @@ impl App {
                             style_ranges: Vec<(usize, usize, StyleType)>,
                             quote: Option<Quote>| {
             // Check for buffered poll data from a race condition (poll event arrived first)
-            let deferred_poll = self.pending_polls.remove(&(conv_id.clone(), msg_ts_ms));
+            let deferred_poll = self.poll_vote.pending_polls.remove(&(conv_id.clone(), msg_ts_ms));
             if let Some(conv) = self.conversations.get_mut(&conv_id) {
                 let pos = conv.messages.partition_point(|m| m.timestamp_ms <= msg_ts_ms);
                 conv.messages.insert(pos, DisplayMessage {
@@ -3987,7 +3785,7 @@ impl App {
                 if let Some(dm) = conv.messages.iter_mut().rev()
                     .find(|m| m.timestamp_ms == msg_ts_ms && !m.body.starts_with('['))
                 {
-                    let (img_lines, img_path) = if self.show_link_previews && self.image_mode != "none" {
+                    let (img_lines, img_path) = if self.image.show_link_previews && self.image.image_mode != "none" {
                         if let Some(ref p) = preview.image_path {
                             (image_render::render_image(Path::new(p), 30), Some(p.clone()))
                         } else {
@@ -4018,11 +3816,11 @@ impl App {
             let not_muted_or_blocked = conv_accepted
                 && !self.muted_conversations.contains(&conv_id)
                 && !self.blocked_conversations.contains(&conv_id);
-            let type_enabled = if is_group { self.notify_group } else { self.notify_direct };
+            let type_enabled = if is_group { self.notifications.notify_group } else { self.notifications.notify_direct };
             if type_enabled && not_muted_or_blocked {
-                self.pending_bell = true;
+                self.notifications.pending_bell = true;
             }
-            if self.desktop_notifications && not_muted_or_blocked {
+            if self.notifications.desktop_notifications && not_muted_or_blocked {
                 let notif_body = msg.body.as_deref().unwrap_or("");
                 let notif_group = if is_group {
                     self.conversations.get(&conv_id).map(|c| c.name.clone())
@@ -4034,7 +3832,7 @@ impl App {
                     notif_body,
                     is_group,
                     notif_group.as_deref(),
-                    &self.notification_preview,
+                    &self.notifications.notification_preview,
                 );
             }
         }
@@ -4332,7 +4130,7 @@ impl App {
             if let Some(idx) = conv.find_msg_idx(timestamp) {
                 conv.messages[idx].poll_data = Some(poll_data.clone());
             } else {
-                self.pending_polls.insert((conv_id.to_string(), timestamp), poll_data.clone());
+                self.poll_vote.pending_polls.insert((conv_id.to_string(), timestamp), poll_data.clone());
             }
         }
         self.db_warn_visible(
@@ -4430,14 +4228,14 @@ impl App {
             })
         } else {
             // Open pin duration picker
-            self.pin_pending = Some(PinPending {
+            self.pin_duration.pending = Some(PinPending {
                 conv_id,
                 is_group,
                 target_author,
                 target_timestamp,
             });
-            self.show_pin_duration = true;
-            self.pin_duration_index = 0;
+            self.pin_duration.show = true;
+            self.pin_duration.index = 0;
             None
         }
     }
@@ -4446,19 +4244,19 @@ impl App {
     pub fn handle_pin_duration_key(&mut self, code: KeyCode) -> Option<SendRequest> {
         match classify_list_key(code, false) {
             ListKeyAction::Down => {
-                if self.pin_duration_index < PIN_DURATIONS.len() - 1 {
-                    self.pin_duration_index += 1;
+                if self.pin_duration.index < PIN_DURATIONS.len() - 1 {
+                    self.pin_duration.index += 1;
                 }
                 None
             }
             ListKeyAction::Up => {
-                self.pin_duration_index = self.pin_duration_index.saturating_sub(1);
+                self.pin_duration.index = self.pin_duration.index.saturating_sub(1);
                 None
             }
             ListKeyAction::Select => {
-                let duration = PIN_DURATIONS[self.pin_duration_index].0;
-                self.show_pin_duration = false;
-                let pending = self.pin_pending.take()?;
+                let duration = PIN_DURATIONS[self.pin_duration.index].0;
+                self.pin_duration.show = false;
+                let pending = self.pin_duration.pending.take()?;
 
                 // Optimistically pin
                 if let Some(conv) = self.conversations.get_mut(&pending.conv_id) {
@@ -4486,8 +4284,8 @@ impl App {
                 })
             }
             ListKeyAction::Close => {
-                self.show_pin_duration = false;
-                self.pin_pending = None;
+                self.pin_duration.show = false;
+                self.pin_duration.pending = None;
                 None
             }
             _ => None,
@@ -4499,23 +4297,23 @@ impl App {
         const FIELD_COUNT: usize = 4;
         const SAVE_INDEX: usize = FIELD_COUNT;
 
-        if self.profile_editing {
+        if self.profile.editing {
             // Editing a field
             match code {
                 KeyCode::Esc => {
                     // Cancel edit, discard buffer
-                    self.profile_editing = false;
+                    self.profile.editing = false;
                 }
                 KeyCode::Enter => {
                     // Confirm edit, write buffer back to field
-                    self.profile_fields[self.profile_index] = self.profile_edit_buffer.clone();
-                    self.profile_editing = false;
+                    self.profile.fields[self.profile.index] = self.profile.edit_buffer.clone();
+                    self.profile.editing = false;
                 }
                 KeyCode::Backspace => {
-                    self.profile_edit_buffer.pop();
+                    self.profile.edit_buffer.pop();
                 }
                 KeyCode::Char(c) => {
-                    self.profile_edit_buffer.push(c);
+                    self.profile.edit_buffer.push(c);
                 }
                 _ => {}
             }
@@ -4525,28 +4323,28 @@ impl App {
         // Navigation mode
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
-                if self.profile_index < SAVE_INDEX {
-                    self.profile_index += 1;
+                if self.profile.index < SAVE_INDEX {
+                    self.profile.index += 1;
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                if self.profile_index > 0 {
-                    self.profile_index -= 1;
+                if self.profile.index > 0 {
+                    self.profile.index -= 1;
                 }
             }
             KeyCode::Enter => {
-                if self.profile_index < FIELD_COUNT {
+                if self.profile.index < FIELD_COUNT {
                     // Start editing the selected field
-                    self.profile_editing = true;
-                    self.profile_edit_buffer = self.profile_fields[self.profile_index].clone();
+                    self.profile.editing = true;
+                    self.profile.edit_buffer = self.profile.fields[self.profile.index].clone();
                 } else {
                     // Save button
-                    let [given_name, family_name, about, about_emoji] = self.profile_fields.clone();
+                    let [given_name, family_name, about, about_emoji] = self.profile.fields.clone();
                     if given_name.trim().is_empty() {
                         self.status_message = "Given name is required".to_string();
                         return None;
                     }
-                    self.show_profile = false;
+                    self.profile.show = false;
                     return Some(SendRequest::UpdateProfile {
                         given_name,
                         family_name,
@@ -4556,7 +4354,7 @@ impl App {
                 }
             }
             KeyCode::Esc => {
-                self.show_profile = false;
+                self.profile.show = false;
             }
             _ => {}
         }
@@ -4564,38 +4362,38 @@ impl App {
     }
 
     pub fn handle_poll_vote_key(&mut self, code: KeyCode) -> Option<SendRequest> {
-        let pending = self.poll_vote_pending.as_ref()?;
+        let pending = self.poll_vote.pending.as_ref()?;
         let option_count = pending.options.len();
         match code {
             KeyCode::Char('j') | KeyCode::Down => {
-                if self.poll_vote_index < option_count.saturating_sub(1) {
-                    self.poll_vote_index += 1;
+                if self.poll_vote.index < option_count.saturating_sub(1) {
+                    self.poll_vote.index += 1;
                 }
                 None
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.poll_vote_index = self.poll_vote_index.saturating_sub(1);
+                self.poll_vote.index = self.poll_vote.index.saturating_sub(1);
                 None
             }
             KeyCode::Char(' ') => {
                 let allow_multiple = pending.allow_multiple;
                 if allow_multiple {
-                    if let Some(sel) = self.poll_vote_selections.get_mut(self.poll_vote_index) {
+                    if let Some(sel) = self.poll_vote.selections.get_mut(self.poll_vote.index) {
                         *sel = !*sel;
                     }
                 } else {
                     // Single select: clear all, select current
-                    for sel in &mut self.poll_vote_selections {
+                    for sel in &mut self.poll_vote.selections {
                         *sel = false;
                     }
-                    if let Some(sel) = self.poll_vote_selections.get_mut(self.poll_vote_index) {
+                    if let Some(sel) = self.poll_vote.selections.get_mut(self.poll_vote.index) {
                         *sel = true;
                     }
                 }
                 None
             }
             KeyCode::Enter => {
-                let selected: Vec<i64> = self.poll_vote_selections
+                let selected: Vec<i64> = self.poll_vote.selections
                     .iter()
                     .enumerate()
                     .filter(|(_, &sel)| sel)
@@ -4604,8 +4402,8 @@ impl App {
                 if selected.is_empty() {
                     return None;
                 }
-                let pending = self.poll_vote_pending.take()?;
-                self.show_poll_vote = false;
+                let pending = self.poll_vote.pending.take()?;
+                self.poll_vote.show = false;
 
                 // Optimistic local vote
                 let voter = self.account.clone();
@@ -4621,8 +4419,8 @@ impl App {
                 })
             }
             KeyCode::Esc => {
-                self.show_poll_vote = false;
-                self.poll_vote_pending = None;
+                self.poll_vote.show = false;
+                self.poll_vote.pending = None;
                 None
             }
             _ => None,
@@ -4783,27 +4581,27 @@ impl App {
             }
         }
         // If verify overlay is open, refresh the displayed identities
-        if self.show_verify {
+        if self.verify.show {
             if let Some(ref conv_id) = self.active_conversation {
                 let conv_id = conv_id.clone();
                 let is_group = self.conversations.get(&conv_id).map(|c| c.is_group).unwrap_or(false);
                 if is_group {
                     if let Some(group) = self.groups.get(&conv_id) {
                         let members: HashSet<&str> = group.members.iter().map(|s| s.as_str()).collect();
-                        self.verify_identities = identities.iter()
+                        self.verify.identities = identities.iter()
                             .filter(|id| id.number.as_ref().is_some_and(|n| members.contains(n.as_str())))
                             .cloned()
                             .collect();
                     }
                 } else {
-                    self.verify_identities = identities.iter()
+                    self.verify.identities = identities.iter()
                         .filter(|id| id.number.as_deref() == Some(conv_id.as_str()))
                         .cloned()
                         .collect();
                 }
                 // Clamp index
-                if !self.verify_identities.is_empty() && self.verify_index >= self.verify_identities.len() {
-                    self.verify_index = self.verify_identities.len() - 1;
+                if !self.verify.identities.is_empty() && self.verify.index >= self.verify.identities.len() {
+                    self.verify.index = self.verify.identities.len() - 1;
                 }
             }
         }
@@ -5323,7 +5121,7 @@ impl App {
                         let is_image = matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp");
                         let prefix = if is_image { "image" } else { "attachment" };
                         let body = if text.is_empty() { format!("[{prefix}: {fname}]") } else { format!("[{prefix}: {fname}] {text}") };
-                        let (img_lines, img_path) = if is_image && self.image_mode != "none" {
+                        let (img_lines, img_path) = if is_image && self.image.image_mode != "none" {
                             (image_render::render_image(path, 40), Some(path.to_string_lossy().into_owned()))
                         } else {
                             (None, None)
@@ -5456,20 +5254,20 @@ impl App {
                 match target.as_deref() {
                     None => {
                         // Toggle both together
-                        let new_state = !(self.notify_direct && self.notify_group);
-                        self.notify_direct = new_state;
-                        self.notify_group = new_state;
+                        let new_state = !(self.notifications.notify_direct && self.notifications.notify_group);
+                        self.notifications.notify_direct = new_state;
+                        self.notifications.notify_group = new_state;
                         let state = if new_state { "on" } else { "off" };
                         self.status_message = format!("notifications {state}");
                     }
                     Some("direct" | "dm" | "1:1") => {
-                        self.notify_direct = !self.notify_direct;
-                        let state = if self.notify_direct { "on" } else { "off" };
+                        self.notifications.notify_direct = !self.notifications.notify_direct;
+                        let state = if self.notifications.notify_direct { "on" } else { "off" };
                         self.status_message = format!("direct notifications {state}");
                     }
                     Some("group" | "groups") => {
-                        self.notify_group = !self.notify_group;
-                        let state = if self.notify_group { "on" } else { "off" };
+                        self.notifications.notify_group = !self.notifications.notify_group;
+                        let state = if self.notifications.notify_group { "on" } else { "off" };
                         self.status_message = format!("group notifications {state}");
                     }
                     Some(other) => {
@@ -5547,22 +5345,22 @@ impl App {
                 self.search.open(query, self.active_conversation.as_deref(), &self.db);
             }
             InputAction::Contacts => {
-                self.show_contacts = true;
-                self.contacts_index = 0;
-                self.contacts_filter.clear();
+                self.contacts_overlay.show = true;
+                self.contacts_overlay.index = 0;
+                self.contacts_overlay.filter.clear();
                 self.refresh_contacts_filter();
             }
             InputAction::Theme => {
-                self.show_theme_picker = true;
-                self.theme_index = self.available_themes.iter()
+                self.theme_picker.show = true;
+                self.theme_picker.index = self.theme_picker.available_themes.iter()
                     .position(|t| t.name == self.theme.name)
                     .unwrap_or(0);
             }
             InputAction::Group => {
-                self.group_menu_state = Some(GroupMenuState::Menu);
-                self.group_menu_index = 0;
-                self.group_menu_filter.clear();
-                self.group_menu_input.clear();
+                self.group_menu.state = Some(GroupMenuState::Menu);
+                self.group_menu.index = 0;
+                self.group_menu.filter.clear();
+                self.group_menu.input.clear();
             }
             InputAction::Verify => {
                 if let Some(ref conv_id) = self.active_conversation {
@@ -5573,7 +5371,7 @@ impl App {
                         // For groups, show identities for all members
                         if let Some(group) = self.groups.get(&conv_id) {
                             let members: HashSet<&str> = group.members.iter().map(|s| s.as_str()).collect();
-                            self.verify_identities = self.identity_trust.keys()
+                            self.verify.identities = self.identity_trust.keys()
                                 .filter(|num| members.contains(num.as_str()))
                                 .filter_map(|num| {
                                     // Find matching identity info from cached data
@@ -5589,11 +5387,11 @@ impl App {
                                 })
                                 .collect();
                         } else {
-                            self.verify_identities.clear();
+                            self.verify.identities.clear();
                         }
                     } else {
                         // 1:1 — show single identity
-                        self.verify_identities = self.identity_trust.get(&conv_id)
+                        self.verify.identities = self.identity_trust.get(&conv_id)
                             .map(|tl| vec![IdentityInfo {
                                 number: Some(conv_id.clone()),
                                 uuid: None,
@@ -5604,8 +5402,8 @@ impl App {
                             }])
                             .unwrap_or_default();
                     }
-                    self.show_verify = true;
-                    self.verify_index = 0;
+                    self.verify.show = true;
+                    self.verify.index = 0;
                     // Request fresh identity data
                     return Some(SendRequest::ListIdentities);
                 } else {
@@ -5613,16 +5411,16 @@ impl App {
                 }
             }
             InputAction::Profile => {
-                self.show_profile = true;
-                self.profile_index = 0;
-                self.profile_editing = false;
+                self.profile.show = true;
+                self.profile.index = 0;
+                self.profile.editing = false;
             }
             InputAction::About => {
                 self.show_about = true;
             }
             InputAction::Keybindings => {
-                self.show_keybindings = true;
-                self.keybindings_index = 0;
+                self.keybindings_overlay.show = true;
+                self.keybindings_overlay.index = 0;
             }
             InputAction::Help => {
                 self.show_help = true;
@@ -6469,8 +6267,8 @@ impl App {
             Ok(mut clipboard) => match clipboard.set_text(&text) {
                 Ok(()) => {
                     self.status_message = "Copied to clipboard".to_string();
-                    if self.clipboard_clear_seconds > 0 {
-                        self.clipboard_set_at = Some(std::time::Instant::now());
+                    if self.notifications.clipboard_clear_seconds > 0 {
+                        self.notifications.clipboard_set_at = Some(std::time::Instant::now());
                     }
                 }
                 Err(e) => {
@@ -6485,9 +6283,9 @@ impl App {
 
     /// Clear the clipboard if auto-clear timer has expired.
     pub fn check_clipboard_clear(&mut self) {
-        if let Some(set_at) = self.clipboard_set_at {
-            if set_at.elapsed().as_secs() >= self.clipboard_clear_seconds {
-                self.clipboard_set_at = None;
+        if let Some(set_at) = self.notifications.clipboard_set_at {
+            if set_at.elapsed().as_secs() >= self.notifications.clipboard_clear_seconds {
+                self.notifications.clipboard_set_at = None;
                 if let Ok(mut clipboard) = arboard::Clipboard::new() {
                     let _ = clipboard.set_text("");
                 }
@@ -6514,22 +6312,22 @@ impl App {
     pub fn has_overlay(&self) -> bool {
         self.show_settings
             || self.show_help
-            || self.show_contacts
+            || self.contacts_overlay.show
             || self.search.visible
             || self.file_picker.visible
-            || self.show_action_menu
-            || self.show_reaction_picker
+            || self.action_menu.show
+            || self.reactions.show_picker
             || self.show_delete_confirm
-            || self.group_menu_state.is_some()
+            || self.group_menu.state.is_some()
             || self.show_message_request
-            || self.show_theme_picker
-            || self.show_keybindings
-            || self.show_settings_profile_manager
-            || self.show_pin_duration
-            || self.show_poll_vote
+            || self.theme_picker.show
+            || self.keybindings_overlay.show
+            || self.settings_profiles.show
+            || self.pin_duration.show
+            || self.poll_vote.show
             || self.show_about
-            || self.show_profile
-            || self.show_forward
+            || self.profile.show
+            || self.forward.show
             || self.autocomplete_visible
     }
 
@@ -6572,7 +6370,7 @@ impl App {
 
     fn handle_left_click(&mut self, col: u16, row: u16) {
         // 1. Check link regions first (highest priority — links overlay everything)
-        for link in &self.link_regions {
+        for link in &self.image.link_regions {
             if row == link.y && col >= link.x && col < link.x + link.width {
                 let url = link.url.clone();
                 self.open_url(&url);
@@ -9258,8 +9056,8 @@ mod tests {
         app.refresh_group_add_filter();
 
         // Only Charlie should appear (not Alice or Bob who are already members)
-        assert_eq!(app.group_menu_filtered.len(), 1);
-        assert_eq!(app.group_menu_filtered[0].0, "+3");
+        assert_eq!(app.group_menu.filtered.len(), 1);
+        assert_eq!(app.group_menu.filtered[0].0, "+3");
     }
 
     #[rstest]
@@ -9279,8 +9077,8 @@ mod tests {
         app.refresh_group_remove_filter();
 
         // Self (+10000000000) should be excluded
-        assert_eq!(app.group_menu_filtered.len(), 2);
-        let phones: Vec<&str> = app.group_menu_filtered.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(app.group_menu.filtered.len(), 2);
+        let phones: Vec<&str> = app.group_menu.filtered.iter().map(|(p, _)| p.as_str()).collect();
         assert!(!phones.contains(&"+10000000000"));
         assert!(phones.contains(&"+1"));
         assert!(phones.contains(&"+2"));
@@ -9302,27 +9100,27 @@ mod tests {
         app.input_buffer = "/group".to_string();
         app.input_cursor = 6;
         app.handle_input();
-        assert_eq!(app.group_menu_state, Some(GroupMenuState::Menu));
+        assert_eq!(app.group_menu.state, Some(GroupMenuState::Menu));
 
         // Press 'm' to go to Members
         app.handle_group_menu_key(KeyCode::Char('m'));
-        assert_eq!(app.group_menu_state, Some(GroupMenuState::Members));
+        assert_eq!(app.group_menu.state, Some(GroupMenuState::Members));
 
         // Esc goes back to Menu
         app.handle_group_menu_key(KeyCode::Esc);
-        assert_eq!(app.group_menu_state, Some(GroupMenuState::Menu));
+        assert_eq!(app.group_menu.state, Some(GroupMenuState::Menu));
 
         // Press 'l' to go to LeaveConfirm
         app.handle_group_menu_key(KeyCode::Char('l'));
-        assert_eq!(app.group_menu_state, Some(GroupMenuState::LeaveConfirm));
+        assert_eq!(app.group_menu.state, Some(GroupMenuState::LeaveConfirm));
 
         // Press 'n' to cancel leave
         app.handle_group_menu_key(KeyCode::Char('n'));
-        assert_eq!(app.group_menu_state, Some(GroupMenuState::Menu));
+        assert_eq!(app.group_menu.state, Some(GroupMenuState::Menu));
 
         // Esc closes the menu entirely
         app.handle_group_menu_key(KeyCode::Esc);
-        assert_eq!(app.group_menu_state, None);
+        assert_eq!(app.group_menu.state, None);
     }
 
     #[rstest]
@@ -9337,22 +9135,22 @@ mod tests {
             member_uuids: vec![],
         });
 
-        app.group_menu_state = Some(GroupMenuState::LeaveConfirm);
+        app.group_menu.state = Some(GroupMenuState::LeaveConfirm);
         let req = app.handle_group_menu_key(KeyCode::Char('y'));
         assert!(req.is_some());
         assert!(matches!(req, Some(SendRequest::LeaveGroup { group_id }) if group_id == "g1"));
-        assert_eq!(app.group_menu_state, None);
+        assert_eq!(app.group_menu.state, None);
     }
 
     #[rstest]
     fn group_create_produces_send_request(mut app: App) {
 
-        app.group_menu_state = Some(GroupMenuState::Create);
-        app.group_menu_input = "New Group".to_string();
+        app.group_menu.state = Some(GroupMenuState::Create);
+        app.group_menu.input = "New Group".to_string();
         let req = app.handle_group_menu_key(KeyCode::Enter);
         assert!(req.is_some());
         assert!(matches!(req, Some(SendRequest::CreateGroup { name }) if name == "New Group"));
-        assert_eq!(app.group_menu_state, None);
+        assert_eq!(app.group_menu.state, None);
     }
 
     #[rstest]
@@ -9360,12 +9158,12 @@ mod tests {
 
         app.get_or_create_conversation("g1", "Old Name", true);
         app.active_conversation = Some("g1".to_string());
-        app.group_menu_state = Some(GroupMenuState::Rename);
-        app.group_menu_input = "New Name".to_string();
+        app.group_menu.state = Some(GroupMenuState::Rename);
+        app.group_menu.input = "New Name".to_string();
         let req = app.handle_group_menu_key(KeyCode::Enter);
         assert!(req.is_some());
         assert!(matches!(req, Some(SendRequest::RenameGroup { group_id, name }) if group_id == "g1" && name == "New Name"));
-        assert_eq!(app.group_menu_state, None);
+        assert_eq!(app.group_menu.state, None);
     }
 
     // --- Message request tests ---
@@ -9492,7 +9290,7 @@ mod tests {
     #[rstest]
     fn bell_skipped_for_unaccepted_conversation(mut app: App) {
         app.handle_signal_event(SignalEvent::MessageReceived(msg_from("+1")));
-        assert!(!app.pending_bell);
+        assert!(!app.notifications.pending_bell);
     }
 
     #[rstest]
@@ -9503,7 +9301,7 @@ mod tests {
         }
         app.blocked_conversations.insert("+1".to_string());
         app.handle_signal_event(SignalEvent::MessageReceived(msg_from("+1")));
-        assert!(!app.pending_bell);
+        assert!(!app.notifications.pending_bell);
     }
 
     #[rstest]
@@ -9716,9 +9514,9 @@ mod tests {
         assert!(app.has_overlay());
         app.show_help = false;
 
-        app.show_contacts = true;
+        app.contacts_overlay.show = true;
         assert!(app.has_overlay());
-        app.show_contacts = false;
+        app.contacts_overlay.show = false;
 
         app.search.visible = true;
         assert!(app.has_overlay());
@@ -9728,21 +9526,21 @@ mod tests {
         assert!(app.has_overlay());
         app.file_picker.visible = false;
 
-        app.show_action_menu = true;
+        app.action_menu.show = true;
         assert!(app.has_overlay());
-        app.show_action_menu = false;
+        app.action_menu.show = false;
 
-        app.show_reaction_picker = true;
+        app.reactions.show_picker = true;
         assert!(app.has_overlay());
-        app.show_reaction_picker = false;
+        app.reactions.show_picker = false;
 
         app.show_delete_confirm = true;
         assert!(app.has_overlay());
         app.show_delete_confirm = false;
 
-        app.group_menu_state = Some(GroupMenuState::Menu);
+        app.group_menu.state = Some(GroupMenuState::Menu);
         assert!(app.has_overlay());
-        app.group_menu_state = None;
+        app.group_menu.state = None;
 
         app.show_message_request = true;
         assert!(app.has_overlay());
@@ -9752,25 +9550,25 @@ mod tests {
         assert!(app.has_overlay());
         app.autocomplete_visible = false;
 
-        app.show_pin_duration = true;
+        app.pin_duration.show = true;
         assert!(app.has_overlay());
-        app.show_pin_duration = false;
+        app.pin_duration.show = false;
 
-        app.show_poll_vote = true;
+        app.poll_vote.show = true;
         assert!(app.has_overlay());
-        app.show_poll_vote = false;
+        app.poll_vote.show = false;
 
         app.show_about = true;
         assert!(app.has_overlay());
         app.show_about = false;
 
-        app.show_profile = true;
+        app.profile.show = true;
         assert!(app.has_overlay());
-        app.show_profile = false;
+        app.profile.show = false;
 
-        app.show_forward = true;
+        app.forward.show = true;
         assert!(app.has_overlay());
-        app.show_forward = false;
+        app.forward.show = false;
 
         assert!(!app.has_overlay());
     }
@@ -9896,33 +9694,33 @@ mod tests {
         app.contact_names.insert("+1".to_string(), "Alice".to_string());
         app.get_or_create_conversation("+other", "Other", false);
         app.active_conversation = Some("+other".to_string());
-        app.notify_direct = true;
+        app.notifications.notify_direct = true;
 
         let msg = make_msg("+1", Some("hey"), None, false);
         app.handle_signal_event(SignalEvent::MessageReceived(msg));
-        assert!(app.pending_bell);
+        assert!(app.notifications.pending_bell);
     }
 
     #[rstest]
     fn bell_not_set_for_active_conversation(mut app: App) {
         app.get_or_create_conversation("+1", "Alice", false);
         app.active_conversation = Some("+1".to_string());
-        app.notify_direct = true;
+        app.notifications.notify_direct = true;
 
         let msg = make_msg("+1", Some("hey"), None, false);
         app.handle_signal_event(SignalEvent::MessageReceived(msg));
-        assert!(!app.pending_bell);
+        assert!(!app.notifications.pending_bell);
     }
 
     #[rstest]
     fn bell_skipped_when_notify_disabled(mut app: App) {
         app.get_or_create_conversation("+other", "Other", false);
         app.active_conversation = Some("+other".to_string());
-        app.notify_direct = false;
+        app.notifications.notify_direct = false;
 
         let msg = make_msg("+1", Some("hey"), None, false);
         app.handle_signal_event(SignalEvent::MessageReceived(msg));
-        assert!(!app.pending_bell);
+        assert!(!app.notifications.pending_bell);
     }
 
     #[rstest]
@@ -9934,17 +9732,17 @@ mod tests {
         app.active_conversation = Some("+other".to_string());
 
         // group notifications enabled
-        app.notify_group = true;
+        app.notifications.notify_group = true;
         let msg = make_msg("+1", Some("hi team"), Some("g1"), false);
         app.handle_signal_event(SignalEvent::MessageReceived(msg));
-        assert!(app.pending_bell);
+        assert!(app.notifications.pending_bell);
 
         // reset and disable
-        app.pending_bell = false;
-        app.notify_group = false;
+        app.notifications.pending_bell = false;
+        app.notifications.notify_group = false;
         let msg2 = make_msg("+2", Some("again"), Some("g1"), false);
         app.handle_signal_event(SignalEvent::MessageReceived(msg2));
-        assert!(!app.pending_bell);
+        assert!(!app.notifications.pending_bell);
     }
 
     // --- Unread count tests ---

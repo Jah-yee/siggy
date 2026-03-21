@@ -206,16 +206,16 @@ impl SettingsProfile {
     pub fn from_app(app: &App, name: String) -> Self {
         Self {
             name,
-            notify_direct: app.notify_direct,
-            notify_group: app.notify_group,
-            desktop_notifications: app.desktop_notifications,
-            image_mode: app.image_mode.clone(),
-            show_link_previews: app.show_link_previews,
+            notify_direct: app.notifications.notify_direct,
+            notify_group: app.notifications.notify_group,
+            desktop_notifications: app.notifications.desktop_notifications,
+            image_mode: app.image.image_mode.clone(),
+            show_link_previews: app.image.show_link_previews,
             date_separators: app.date_separators,
             show_receipts: app.show_receipts,
             color_receipts: app.color_receipts,
             nerd_fonts: app.nerd_fonts,
-            reaction_verbose: app.reaction_verbose,
+            reaction_verbose: app.reactions.verbose,
             send_read_receipts: app.send_read_receipts,
             mouse_enabled: app.mouse_enabled,
             sidebar_on_right: app.sidebar_on_right,
@@ -224,16 +224,16 @@ impl SettingsProfile {
 
     /// Apply this profile to the app.
     pub fn apply_to(&self, app: &mut App) {
-        app.notify_direct = self.notify_direct;
-        app.notify_group = self.notify_group;
-        app.desktop_notifications = self.desktop_notifications;
-        app.image_mode = self.image_mode.clone();
-        app.show_link_previews = self.show_link_previews;
+        app.notifications.notify_direct = self.notify_direct;
+        app.notifications.notify_group = self.notify_group;
+        app.notifications.desktop_notifications = self.desktop_notifications;
+        app.image.image_mode = self.image_mode.clone();
+        app.image.show_link_previews = self.show_link_previews;
         app.date_separators = self.date_separators;
         app.show_receipts = self.show_receipts;
         app.color_receipts = self.color_receipts;
         app.nerd_fonts = self.nerd_fonts;
-        app.reaction_verbose = self.reaction_verbose;
+        app.reactions.verbose = self.reaction_verbose;
         app.send_read_receipts = self.send_read_receipts;
         app.mouse_enabled = self.mouse_enabled;
         app.sidebar_on_right = self.sidebar_on_right;
@@ -241,16 +241,16 @@ impl SettingsProfile {
 
     /// Check whether the app's current settings match this profile.
     pub fn matches_app(&self, app: &App) -> bool {
-        self.notify_direct == app.notify_direct
-            && self.notify_group == app.notify_group
-            && self.desktop_notifications == app.desktop_notifications
-            && self.image_mode == app.image_mode
-            && self.show_link_previews == app.show_link_previews
+        self.notify_direct == app.notifications.notify_direct
+            && self.notify_group == app.notifications.notify_group
+            && self.desktop_notifications == app.notifications.desktop_notifications
+            && self.image_mode == app.image.image_mode
+            && self.show_link_previews == app.image.show_link_previews
             && self.date_separators == app.date_separators
             && self.show_receipts == app.show_receipts
             && self.color_receipts == app.color_receipts
             && self.nerd_fonts == app.nerd_fonts
-            && self.reaction_verbose == app.reaction_verbose
+            && self.reaction_verbose == app.reactions.verbose
             && self.send_read_receipts == app.send_read_receipts
             && self.mouse_enabled == app.mouse_enabled
             && self.sidebar_on_right == app.sidebar_on_right

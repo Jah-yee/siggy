@@ -477,8 +477,8 @@ fn styled_uri_spans(
 }
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    app.link_url_map.clear();
-    app.visible_images.clear();
+    app.image.link_url_map.clear();
+    app.image.visible_images.clear();
     let size = frame.area();
     let terminal_width = size.width;
 
@@ -541,12 +541,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // Contacts overlay (overlays everything)
-    if app.show_contacts {
+    if app.contacts_overlay.show {
         draw_contacts(frame, app, size);
     }
 
     // Verify identity overlay
-    if app.show_verify {
+    if app.verify.show {
         draw_verify(frame, app, size);
     }
 
@@ -561,7 +561,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // Group management menu overlay
-    if app.group_menu_state.is_some() {
+    if app.group_menu.state.is_some() {
         draw_group_menu(frame, app, size);
     }
 
@@ -571,12 +571,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // Action menu overlay
-    if app.show_action_menu {
+    if app.action_menu.show {
         draw_action_menu(frame, app, size);
     }
 
     // Reaction picker overlay
-    if app.show_reaction_picker {
+    if app.reactions.show_picker {
         draw_reaction_picker(frame, app, size);
     }
 
@@ -586,27 +586,27 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // Theme picker overlay
-    if app.show_theme_picker {
+    if app.theme_picker.show {
         draw_theme_picker(frame, app, size);
     }
 
     // Keybindings overlay
-    if app.show_keybindings {
+    if app.keybindings_overlay.show {
         draw_keybindings(frame, app, size);
     }
 
     // Settings profile manager overlay
-    if app.show_settings_profile_manager {
+    if app.settings_profiles.show {
         draw_settings_profile_manager(frame, app, size);
     }
 
     // Pin duration picker overlay
-    if app.show_pin_duration {
+    if app.pin_duration.show {
         draw_pin_duration_picker(frame, app, size);
     }
 
     // Poll vote overlay
-    if app.show_poll_vote {
+    if app.poll_vote.show {
         draw_poll_vote_overlay(frame, app, size);
     }
 
@@ -616,23 +616,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     // Profile editor overlay
-    if app.show_profile {
+    if app.profile.show {
         draw_profile(frame, app, size);
     }
 
     // Forward message picker overlay
-    if app.show_forward {
+    if app.forward.show {
         draw_forward(frame, app, size);
     }
 
     // Collect link regions from the rendered buffer for OSC 8 injection
     let area = frame.area();
-    app.link_regions = collect_link_regions(frame.buffer_mut(), area, app.theme.link);
+    app.image.link_regions = collect_link_regions(frame.buffer_mut(), area, app.theme.link);
 
     // Resolve hidden URLs for attachment links (display text has no URI scheme)
-    for link in &mut app.link_regions {
+    for link in &mut app.image.link_regions {
         if !link.url.contains("://") {
-            if let Some(url) = app.link_url_map.get(&link.text) {
+            if let Some(url) = app.image.link_url_map.get(&link.text) {
                 link.url = url.clone();
             }
         }
@@ -929,7 +929,7 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut line_msg_idx: Vec<Option<usize>> = Vec::new();
 
     // Track images for native protocol overlay: (first_line_index, line_count, path)
-    let use_native = app.image_mode == "native" && app.image_protocol != ImageProtocol::Halfblock;
+    let use_native = app.image.image_mode == "native" && app.image.image_protocol != ImageProtocol::Halfblock;
     let mut image_records: Vec<(usize, usize, String)> = Vec::new();
 
     for (i, msg) in visible.iter().enumerate() {
@@ -969,7 +969,7 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
         }
 
         if msg.is_system {
-            let body = if app.emoji_to_text { emoji_to_text(&msg.body) } else { msg.body.clone() };
+            let body = if app.reactions.emoji_to_text { emoji_to_text(&msg.body) } else { msg.body.clone() };
             lines.push(Line::from(Span::styled(
                 format!("  {body}"),
                 Style::default().fg(theme.system_msg),
@@ -978,7 +978,7 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
         } else {
             // Render quoted reply line above message
             if let Some(ref quote) = msg.quote {
-                let raw_body = if app.emoji_to_text { emoji_to_text(&quote.body) } else { quote.body.clone() };
+                let raw_body = if app.reactions.emoji_to_text { emoji_to_text(&quote.body) } else { quote.body.clone() };
                 let quote_body = truncate(&raw_body, 50);
                 lines.push(Line::from(vec![
                     Span::styled("  \u{256D} ", Style::default().fg(theme.quote)),
@@ -1057,10 +1057,10 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
                 if let Some(url) = hidden_url {
                     // Collect display text for link_url_map lookup
                     let display_text: String = body_spans.iter().map(|s| s.content.as_ref()).collect();
-                    app.link_url_map.insert(display_text, url);
+                    app.image.link_url_map.insert(display_text, url);
                 }
                 spans.push(Span::raw(" ".to_string()));
-                if app.emoji_to_text {
+                if app.reactions.emoji_to_text {
                     spans.extend(body_spans.into_iter().map(|s| {
                         Span::styled(emoji_to_text(&s.content), s.style)
                     }));
@@ -1073,7 +1073,7 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
             line_msg_idx.push(Some(msg_index));
 
             // Render inline image preview if available (skip for deleted, skip if images disabled)
-            if !msg.is_deleted && app.image_mode != "none" {
+            if !msg.is_deleted && app.image.image_mode != "none" {
                 if let Some(ref image_lines) = msg.image_lines {
                     let first_idx = lines.len();
                     let count = image_lines.len();
@@ -1091,7 +1091,7 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
             }
 
             // Render link preview block
-            if !msg.is_deleted && app.show_link_previews {
+            if !msg.is_deleted && app.image.show_link_previews {
                 if let Some(ref preview) = msg.preview {
                     if let Some(ref title) = preview.title {
                         lines.push(Line::from(vec![
@@ -1124,7 +1124,7 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
                     line_msg_idx.push(Some(msg_index));
 
                     // Render link preview thumbnail (only when images enabled)
-                    if app.image_mode != "none" {
+                    if app.image.image_mode != "none" {
                         if let Some(ref img_lines) = msg.preview_image_lines {
                             let first_idx = lines.len();
                             let count = img_lines.len();
@@ -1154,8 +1154,8 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
             }
 
             // Render reaction summary line (skip for deleted or when reactions hidden)
-            if app.show_reactions && !msg.is_deleted && !msg.reactions.is_empty() {
-                lines.push(build_reaction_summary(&msg.reactions, app.reaction_verbose, app.emoji_to_text, theme));
+            if app.reactions.show_reactions && !msg.is_deleted && !msg.reactions.is_empty() {
+                lines.push(build_reaction_summary(&msg.reactions, app.reactions.verbose, app.reactions.emoji_to_text, theme));
                 line_msg_idx.push(Some(msg_index));
             }
         }
@@ -1307,7 +1307,7 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
                 let full_height = (img_end - img_start) as u16;
                 let crop_top = (vis_start as i64 - screen_start) as u16;
 
-                app.visible_images.push(VisibleImage {
+                app.image.visible_images.push(VisibleImage {
                     x: inner.x + 2, // account for 2-char indent
                     y: inner.y + vis_start,
                     width: img_width,
@@ -1338,7 +1338,7 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
         .scroll((scroll_y as u16, 0));
     frame.render_widget(paragraph, inner);
 
-    if use_native && app.image_protocol == ImageProtocol::Kitty {
+    if use_native && app.image.image_protocol == ImageProtocol::Kitty {
         patch_kitty_placeholders(frame, app);
     }
     // Note: Sixel does NOT use set_skip. ratatui writes halfblock at image cells,
@@ -1366,13 +1366,13 @@ fn draw_messages(frame: &mut Frame, app: &mut App, area: Rect) {
 /// Replaces the halfblock cells with U+10EEEE + row/column diacritics so the
 /// terminal renders image data at the cell level (instead of GPU overlays).
 fn patch_kitty_placeholders(frame: &mut Frame, app: &mut App) {
-    for img in &app.visible_images {
-        let id = if let Some(&existing) = app.kitty_image_ids.get(&img.path) {
+    for img in &app.image.visible_images {
+        let id = if let Some(&existing) = app.image.kitty_image_ids.get(&img.path) {
             existing
         } else {
-            let new_id = app.next_kitty_image_id;
-            app.next_kitty_image_id += 1;
-            app.kitty_image_ids.insert(img.path.clone(), new_id);
+            let new_id = app.image.next_kitty_image_id;
+            app.image.next_kitty_image_id += 1;
+            app.image.kitty_image_ids.insert(img.path.clone(), new_id);
             new_id
         };
         let fg = image_render::kitty_id_color(id);
@@ -1390,8 +1390,8 @@ fn patch_kitty_placeholders(frame: &mut Frame, app: &mut App) {
             }
         }
 
-        if !app.kitty_transmitted.contains(&id) {
-            app.kitty_pending_transmits.push((
+        if !app.image.kitty_transmitted.contains(&id) {
+            app.image.kitty_pending_transmits.push((
                 id,
                 img.path.clone(),
                 img.width,
@@ -1442,7 +1442,7 @@ pub(crate) fn build_reaction_summary(reactions: &[Reaction], verbose: bool, conv
 
 fn draw_group_menu(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let state = match &app.group_menu_state {
+    let state = match &app.group_menu.state {
         Some(s) => s,
         None => return,
     };
@@ -1466,7 +1466,7 @@ fn draw_group_menu(frame: &mut Frame, app: &App, area: Rect) {
             let content_width = inner.width as usize;
             let mut lines: Vec<Line> = Vec::new();
             for (i, action) in items.iter().enumerate() {
-                let is_selected = i == app.group_menu_index;
+                let is_selected = i == app.group_menu.index;
                 let icon = if app.nerd_fonts {
                     format!("{} ", action.nerd_icon)
                 } else {
@@ -1500,7 +1500,7 @@ fn draw_group_menu(frame: &mut Frame, app: &App, area: Rect) {
             frame.render_widget(popup, inner);
         }
         GroupMenuState::Members => {
-            let max_visible = GROUP_MEMBER_MAX_VISIBLE.min(app.group_menu_filtered.len().max(1));
+            let max_visible = GROUP_MEMBER_MAX_VISIBLE.min(app.group_menu.filtered.len().max(1));
             let pref_height = max_visible as u16 + 5;
             let title = " Members ".to_string();
             let (popup_area, block) = centered_popup(
@@ -1509,22 +1509,22 @@ fn draw_group_menu(frame: &mut Frame, app: &App, area: Rect) {
             let inner_height = popup_area.height.saturating_sub(2) as usize;
             let footer_lines = 2;
             let visible_rows = inner_height.saturating_sub(footer_lines);
-            let scroll_offset = if app.group_menu_index >= visible_rows {
-                app.group_menu_index - visible_rows + 1
+            let scroll_offset = if app.group_menu.index >= visible_rows {
+                app.group_menu.index - visible_rows + 1
             } else {
                 0
             };
             let mut lines: Vec<Line> = Vec::new();
-            if app.group_menu_filtered.is_empty() {
+            if app.group_menu.filtered.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "  No members",
                     Style::default().fg(theme.fg_muted),
                 )));
             } else {
-                let end = (scroll_offset + visible_rows).min(app.group_menu_filtered.len());
-                for (i, (phone, name)) in app.group_menu_filtered[scroll_offset..end].iter().enumerate() {
+                let end = (scroll_offset + visible_rows).min(app.group_menu.filtered.len());
+                for (i, (phone, name)) in app.group_menu.filtered[scroll_offset..end].iter().enumerate() {
                     let actual_index = scroll_offset + i;
-                    let is_selected = actual_index == app.group_menu_index;
+                    let is_selected = actual_index == app.group_menu.index;
                     let is_self = *phone == app.account;
                     let display = if is_self {
                         format!("  {} (you)", name)
@@ -1560,18 +1560,18 @@ fn draw_group_menu(frame: &mut Frame, app: &App, area: Rect) {
         }
         GroupMenuState::AddMember | GroupMenuState::RemoveMember => {
             let is_add = *state == GroupMenuState::AddMember;
-            let max_visible = GROUP_MEMBER_MAX_VISIBLE.min(app.group_menu_filtered.len().max(1));
+            let max_visible = GROUP_MEMBER_MAX_VISIBLE.min(app.group_menu.filtered.len().max(1));
             let pref_height = max_visible as u16 + 5;
             let title = if is_add {
-                if app.group_menu_filter.is_empty() {
+                if app.group_menu.filter.is_empty() {
                     " Add Member ".to_string()
                 } else {
-                    format!(" Add Member [{}] ", app.group_menu_filter)
+                    format!(" Add Member [{}] ", app.group_menu.filter)
                 }
-            } else if app.group_menu_filter.is_empty() {
+            } else if app.group_menu.filter.is_empty() {
                 " Remove Member ".to_string()
             } else {
-                format!(" Remove Member [{}] ", app.group_menu_filter)
+                format!(" Remove Member [{}] ", app.group_menu.filter)
             };
             let (popup_area, block) = centered_popup(
                 frame, area, CONTACTS_POPUP_WIDTH, pref_height, &title, theme,
@@ -1579,24 +1579,24 @@ fn draw_group_menu(frame: &mut Frame, app: &App, area: Rect) {
             let inner_height = popup_area.height.saturating_sub(2) as usize;
             let footer_lines = 2;
             let visible_rows = inner_height.saturating_sub(footer_lines);
-            let scroll_offset = if app.group_menu_index >= visible_rows {
-                app.group_menu_index - visible_rows + 1
+            let scroll_offset = if app.group_menu.index >= visible_rows {
+                app.group_menu.index - visible_rows + 1
             } else {
                 0
             };
             let mut lines: Vec<Line> = Vec::new();
-            if app.group_menu_filtered.is_empty() {
+            if app.group_menu.filtered.is_empty() {
                 let msg = if is_add { "  No contacts to add" } else { "  No members to remove" };
                 lines.push(Line::from(Span::styled(
                     msg,
                     Style::default().fg(theme.fg_muted),
                 )));
             } else {
-                let end = (scroll_offset + visible_rows).min(app.group_menu_filtered.len());
+                let end = (scroll_offset + visible_rows).min(app.group_menu.filtered.len());
                 let inner_w = popup_area.width.saturating_sub(2) as usize;
-                for (i, (phone, name)) in app.group_menu_filtered[scroll_offset..end].iter().enumerate() {
+                for (i, (phone, name)) in app.group_menu.filtered[scroll_offset..end].iter().enumerate() {
                     let actual_index = scroll_offset + i;
-                    let is_selected = actual_index == app.group_menu_index;
+                    let is_selected = actual_index == app.group_menu.index;
                     let number_display = format!("  {}", phone);
                     let name_max = inner_w.saturating_sub(number_display.len() + 2);
                     let display_name = truncate(name, name_max);
@@ -1636,7 +1636,7 @@ fn draw_group_menu(frame: &mut Frame, app: &App, area: Rect) {
             let inner = block.inner(popup_area);
             frame.render_widget(block, popup_area);
             let mut lines: Vec<Line> = Vec::new();
-            let input_display = format!("  {}\u{2588}", app.group_menu_input);
+            let input_display = format!("  {}\u{2588}", app.group_menu.input);
             lines.push(Line::from(Span::styled(
                 input_display,
                 Style::default().fg(theme.fg),
@@ -1737,7 +1737,7 @@ fn draw_action_menu(frame: &mut Frame, app: &App, area: Rect) {
 
     let mut lines: Vec<Line> = Vec::new();
     for (i, action) in items.iter().enumerate() {
-        let is_selected = i == app.action_menu_index;
+        let is_selected = i == app.action_menu.index;
         let icon = if app.nerd_fonts {
             format!("{} ", action.nerd_icon)
         } else {
@@ -1788,13 +1788,13 @@ fn draw_reaction_picker(frame: &mut Frame, app: &App, area: Rect) {
 
     let mut spans = vec![Span::raw(" ".to_string())];
     for (i, emoji) in QUICK_REACTIONS.iter().enumerate() {
-        let style = if i == app.reaction_picker_index {
+        let style = if i == app.reactions.picker_index {
             Style::default().bg(theme.bg_selected).add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };
-        let prefix = if i == app.reaction_picker_index { "[" } else { " " };
-        let suffix = if i == app.reaction_picker_index { "]" } else { " " };
+        let prefix = if i == app.reactions.picker_index { "[" } else { " " };
+        let suffix = if i == app.reactions.picker_index { "]" } else { " " };
         spans.push(Span::styled(format!("{prefix}{emoji}{suffix}"), style));
     }
 
@@ -2383,7 +2383,7 @@ fn draw_settings(frame: &mut Frame, app: &App, area: Rect) {
     };
     lines.push(Line::from(vec![
         Span::styled("  Notification preview: ", preview_style),
-        Span::styled(app.notification_preview.clone(), preview_value_style),
+        Span::styled(app.notifications.notification_preview.clone(), preview_value_style),
     ]));
 
     // Image mode cycle entry (index == SETTINGS.len() + 1)
@@ -2401,7 +2401,7 @@ fn draw_settings(frame: &mut Frame, app: &App, area: Rect) {
     };
     lines.push(Line::from(vec![
         Span::styled("  Image mode: ", image_mode_style),
-        Span::styled(app.image_mode.clone(), image_mode_value_style),
+        Span::styled(app.image.image_mode.clone(), image_mode_value_style),
     ]));
 
     // Theme selector entry (index == SETTINGS.len() + 2)
@@ -2452,7 +2452,7 @@ fn draw_settings(frame: &mut Frame, app: &App, area: Rect) {
     };
     lines.push(Line::from(vec![
         Span::styled("  Profile: ", profile_style),
-        Span::styled(app.settings_profile_name.clone(), profile_value_style),
+        Span::styled(app.settings_profiles.name.clone(), profile_value_style),
     ]));
 
     // Hint line for the currently selected item
@@ -2616,13 +2616,13 @@ fn draw_help(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_contacts(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let max_visible = CONTACTS_MAX_VISIBLE.min(app.contacts_filtered.len());
+    let max_visible = CONTACTS_MAX_VISIBLE.min(app.contacts_overlay.filtered.len());
     let pref_height = max_visible as u16 + 5; // +3 border/title +2 footer/filter
 
-    let title = if app.contacts_filter.is_empty() {
+    let title = if app.contacts_overlay.filter.is_empty() {
         " Contacts ".to_string()
     } else {
-        format!(" Contacts [{}] ", app.contacts_filter)
+        format!(" Contacts [{}] ", app.contacts_overlay.filter)
     };
 
     let (popup_area, block) = centered_popup(
@@ -2630,22 +2630,22 @@ fn draw_contacts(frame: &mut Frame, app: &App, area: Rect) {
     );
 
     let inner_height = popup_area.height.saturating_sub(2) as usize; // minus borders
-    let (visible_rows, scroll_offset) = list_overlay::scroll_layout(inner_height, 2, app.contacts_index);
+    let (visible_rows, scroll_offset) = list_overlay::scroll_layout(inner_height, 2, app.contacts_overlay.index);
 
     let mut lines: Vec<Line> = Vec::new();
 
-    if app.contacts_filtered.is_empty() {
+    if app.contacts_overlay.filtered.is_empty() {
         lines.push(Line::from(Span::styled(
             "  No contacts found",
             Style::default().fg(theme.fg_muted),
         )));
     } else {
-        let end = (scroll_offset + visible_rows).min(app.contacts_filtered.len());
+        let end = (scroll_offset + visible_rows).min(app.contacts_overlay.filtered.len());
         let inner_w = popup_area.width.saturating_sub(2) as usize;
 
-        for (i, (number, name)) in app.contacts_filtered[scroll_offset..end].iter().enumerate() {
+        for (i, (number, name)) in app.contacts_overlay.filtered[scroll_offset..end].iter().enumerate() {
             let actual_index = scroll_offset + i;
-            let is_selected = actual_index == app.contacts_index;
+            let is_selected = actual_index == app.contacts_overlay.index;
             let has_conversation = app.conversation_order.contains(number);
 
             // Checkmark for contacts that already have a conversation
@@ -2708,7 +2708,7 @@ fn draw_verify(frame: &mut Frame, app: &App, area: Rect) {
     let inner = popup_area.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
     let mut lines: Vec<Line> = Vec::new();
 
-    if app.verify_identities.is_empty() {
+    if app.verify.identities.is_empty() {
         lines.push(Line::from(Span::styled(
             "  No identity information available",
             Style::default().fg(theme.fg_muted),
@@ -2721,16 +2721,16 @@ fn draw_verify(frame: &mut Frame, app: &App, area: Rect) {
     } else if is_group {
         // Group view: scrollable member list with trust badges
         let member_rows = inner.height.saturating_sub(7) as usize; // reserve for safety number + footer
-        let scroll_offset = if app.verify_index >= member_rows {
-            app.verify_index - member_rows + 1
+        let scroll_offset = if app.verify.index >= member_rows {
+            app.verify.index - member_rows + 1
         } else {
             0
         };
-        let end = (scroll_offset + member_rows).min(app.verify_identities.len());
+        let end = (scroll_offset + member_rows).min(app.verify.identities.len());
 
-        for (i, identity) in app.verify_identities[scroll_offset..end].iter().enumerate() {
+        for (i, identity) in app.verify.identities[scroll_offset..end].iter().enumerate() {
             let actual_idx = scroll_offset + i;
-            let is_selected = actual_idx == app.verify_index;
+            let is_selected = actual_idx == app.verify.index;
             let number = identity.number.as_deref().unwrap_or("unknown");
             let name = app.contact_names.get(number).cloned().unwrap_or_else(|| number.to_string());
             let (badge, badge_color) = match identity.trust_level {
@@ -2759,7 +2759,7 @@ fn draw_verify(frame: &mut Frame, app: &App, area: Rect) {
         lines.push(Line::from(""));
 
         // Show selected member's safety number
-        if let Some(identity) = app.verify_identities.get(app.verify_index) {
+        if let Some(identity) = app.verify.identities.get(app.verify.index) {
             if !identity.safety_number.is_empty() {
                 lines.push(Line::from(Span::styled("  Safety Number:", Style::default().fg(theme.fg_secondary))));
                 let sn = &identity.safety_number;
@@ -2773,7 +2773,7 @@ fn draw_verify(frame: &mut Frame, app: &App, area: Rect) {
         }
 
         lines.push(Line::from(""));
-        if app.verify_confirming {
+        if app.verify.confirming {
             lines.push(Line::from(Span::styled(
                 "  Compare safety numbers, then press v to confirm",
                 Style::default().fg(theme.warning),
@@ -2786,7 +2786,7 @@ fn draw_verify(frame: &mut Frame, app: &App, area: Rect) {
         }
     } else {
         // 1:1 view: single identity with full details
-        let identity = &app.verify_identities[0];
+        let identity = &app.verify.identities[0];
         let number = identity.number.as_deref().unwrap_or("unknown");
         let name = app.contact_names.get(number).cloned().unwrap_or_else(|| number.to_string());
 
@@ -2825,7 +2825,7 @@ fn draw_verify(frame: &mut Frame, app: &App, area: Rect) {
             lines.push(Line::from(""));
         }
 
-        if app.verify_confirming {
+        if app.verify.confirming {
             lines.push(Line::from(Span::styled(
                 "  Compare safety numbers, then press v to confirm",
                 Style::default().fg(theme.warning),
@@ -3222,7 +3222,7 @@ fn draw_file_browser(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_theme_picker(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let max_visible = 12usize.min(app.available_themes.len());
+    let max_visible = 12usize.min(app.theme_picker.available_themes.len());
     let pref_height = max_visible as u16 + 5; // border + title + footer
 
     let (popup_area, block) = centered_popup(
@@ -3230,14 +3230,14 @@ fn draw_theme_picker(frame: &mut Frame, app: &App, area: Rect) {
     );
 
     let inner_height = popup_area.height.saturating_sub(2) as usize;
-    let (visible_rows, scroll_offset) = list_overlay::scroll_layout(inner_height, 2, app.theme_index);
+    let (visible_rows, scroll_offset) = list_overlay::scroll_layout(inner_height, 2, app.theme_picker.index);
 
     let mut lines: Vec<Line> = Vec::new();
 
-    let end = (scroll_offset + visible_rows).min(app.available_themes.len());
-    for (i, t) in app.available_themes[scroll_offset..end].iter().enumerate() {
+    let end = (scroll_offset + visible_rows).min(app.theme_picker.available_themes.len());
+    for (i, t) in app.theme_picker.available_themes[scroll_offset..end].iter().enumerate() {
         let actual_index = scroll_offset + i;
-        let is_selected = actual_index == app.theme_index;
+        let is_selected = actual_index == app.theme_picker.index;
         let is_active = t.name == app.theme.name;
 
         let marker = if is_active { "[*]" } else { "[ ]" };
@@ -3285,7 +3285,7 @@ fn draw_keybindings(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
 
     // If the profile picker sub-overlay is open, draw it instead
-    if app.keybindings_profile_picker {
+    if app.keybindings_overlay.profile_picker {
         draw_keybindings_profile_picker(frame, app, area);
         return;
     }
@@ -3303,8 +3303,8 @@ fn draw_keybindings(frame: &mut Frame, app: &App, area: Rect) {
     let footer_lines = 2;
     let visible_rows = inner_height.saturating_sub(footer_lines);
 
-    let scroll_offset = if app.keybindings_index >= visible_rows {
-        app.keybindings_index - visible_rows + 1
+    let scroll_offset = if app.keybindings_overlay.index >= visible_rows {
+        app.keybindings_overlay.index - visible_rows + 1
     } else {
         0
     };
@@ -3315,7 +3315,7 @@ fn draw_keybindings(frame: &mut Frame, app: &App, area: Rect) {
 
     let end = (scroll_offset + visible_rows).min(total_rows);
     for row in scroll_offset..end {
-        let is_selected = row == app.keybindings_index;
+        let is_selected = row == app.keybindings_overlay.index;
         let (mode, action): (BindingMode, Option<KeyAction>) = app.keybindings_overlay_item(row);
 
         if row == 0 {
@@ -3349,7 +3349,7 @@ fn draw_keybindings(frame: &mut Frame, app: &App, area: Rect) {
             // Action row
             let action = action.unwrap();
             let label = keybindings::action_label(action);
-            let key_display = if is_selected && app.keybindings_capturing {
+            let key_display = if is_selected && app.keybindings_overlay.capturing {
                 "[Press key...]".to_string()
             } else {
                 app.keybindings.display_key(action)
@@ -3391,7 +3391,7 @@ fn draw_keybindings(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_keybindings_profile_picker(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let max_visible = 8usize.min(app.available_kb_profiles.len());
+    let max_visible = 8usize.min(app.keybindings_overlay.available_profiles.len());
     let pref_height = max_visible as u16 + 5;
 
     let (popup_area, block) = centered_popup(
@@ -3402,17 +3402,17 @@ fn draw_keybindings_profile_picker(frame: &mut Frame, app: &App, area: Rect) {
     let footer_lines = 2;
     let visible_rows = inner_height.saturating_sub(footer_lines);
 
-    let scroll_offset = if app.keybindings_profile_index >= visible_rows {
-        app.keybindings_profile_index - visible_rows + 1
+    let scroll_offset = if app.keybindings_overlay.profile_index >= visible_rows {
+        app.keybindings_overlay.profile_index - visible_rows + 1
     } else {
         0
     };
 
     let mut lines: Vec<Line> = Vec::new();
-    let end = (scroll_offset + visible_rows).min(app.available_kb_profiles.len());
+    let end = (scroll_offset + visible_rows).min(app.keybindings_overlay.available_profiles.len());
     for i in scroll_offset..end {
-        let is_selected = i == app.keybindings_profile_index;
-        let is_active = app.available_kb_profiles[i] == app.keybindings.profile_name;
+        let is_selected = i == app.keybindings_overlay.profile_index;
+        let is_active = app.keybindings_overlay.available_profiles[i] == app.keybindings.profile_name;
         let marker = if is_active { "[*]" } else { "[ ]" };
 
         let row_style = if is_selected {
@@ -3428,7 +3428,7 @@ fn draw_keybindings_profile_picker(frame: &mut Frame, app: &App, area: Rect) {
 
         lines.push(Line::from(vec![
             Span::styled(format!("  {marker} "), marker_style),
-            Span::styled(app.available_kb_profiles[i].clone(), row_style),
+            Span::styled(app.keybindings_overlay.available_profiles[i].clone(), row_style),
         ]));
     }
 
@@ -3450,12 +3450,12 @@ fn draw_settings_profile_manager(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
 
     // If save-as input is active, draw that sub-overlay instead
-    if app.settings_profile_save_as {
+    if app.settings_profiles.save_as {
         draw_settings_profile_save_as(frame, app, area);
         return;
     }
 
-    let max_visible = 10usize.min(app.available_settings_profiles.len());
+    let max_visible = 10usize.min(app.settings_profiles.available.len());
     let pref_height = max_visible as u16 + 5; // borders + footer
 
     let (popup_area, block) = centered_popup(
@@ -3466,22 +3466,22 @@ fn draw_settings_profile_manager(frame: &mut Frame, app: &App, area: Rect) {
     let footer_lines = 2;
     let visible_rows = inner_height.saturating_sub(footer_lines);
 
-    let scroll_offset = if app.settings_profile_manager_index >= visible_rows {
-        app.settings_profile_manager_index - visible_rows + 1
+    let scroll_offset = if app.settings_profiles.index >= visible_rows {
+        app.settings_profiles.index - visible_rows + 1
     } else {
         0
     };
 
     // Determine if current settings differ from loaded profile
-    let has_changes = !app.available_settings_profiles.iter()
-        .any(|p| p.name == app.settings_profile_name && p.matches_app(app));
+    let has_changes = !app.settings_profiles.available.iter()
+        .any(|p| p.name == app.settings_profiles.name && p.matches_app(app));
 
     let mut lines: Vec<Line> = Vec::new();
-    let end = (scroll_offset + visible_rows).min(app.available_settings_profiles.len());
+    let end = (scroll_offset + visible_rows).min(app.settings_profiles.available.len());
     for i in scroll_offset..end {
-        let profile = &app.available_settings_profiles[i];
-        let is_selected = i == app.settings_profile_manager_index;
-        let is_active = profile.name == app.settings_profile_name;
+        let profile = &app.settings_profiles.available[i];
+        let is_selected = i == app.settings_profiles.index;
+        let is_active = profile.name == app.settings_profiles.name;
 
         let marker = if is_active { ">" } else { " " };
         let row_style = if is_selected {
@@ -3506,7 +3506,7 @@ fn draw_settings_profile_manager(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Build contextual footer hints
-    let selected_profile = app.available_settings_profiles.get(app.settings_profile_manager_index);
+    let selected_profile = app.settings_profiles.available.get(app.settings_profiles.index);
     let is_builtin = selected_profile
         .map(|p| crate::settings_profile::is_builtin(&p.name))
         .unwrap_or(true);
@@ -3538,13 +3538,13 @@ fn draw_settings_profile_save_as(frame: &mut Frame, app: &App, area: Rect) {
         frame, area, 40, 7, " Save Profile As ", theme,
     );
 
-    let cursor_char = if app.settings_profile_save_as_input.is_empty() { "_" } else { "" };
+    let cursor_char = if app.settings_profiles.save_as_input.is_empty() { "_" } else { "" };
     let lines = vec![
         Line::from(""),
         Line::from(vec![
             Span::styled("  Name: ", Style::default().fg(theme.fg_secondary)),
             Span::styled(
-                format!("{}{cursor_char}", app.settings_profile_save_as_input),
+                format!("{}{cursor_char}", app.settings_profiles.save_as_input),
                 Style::default().fg(theme.fg).add_modifier(Modifier::UNDERLINED),
             ),
         ]),
@@ -3571,12 +3571,12 @@ fn draw_pin_duration_picker(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
     for (i, (_seconds, label)) in PIN_DURATIONS.iter().enumerate() {
-        let style = if i == app.pin_duration_index {
+        let style = if i == app.pin_duration.index {
             list_overlay::selection_style(theme.bg_selected, theme.fg)
         } else {
             Style::default().fg(theme.fg)
         };
-        let marker = if i == app.pin_duration_index { ">" } else { " " };
+        let marker = if i == app.pin_duration.index { ">" } else { " " };
         lines.push(Line::from(Span::styled(
             format!(" {marker} {label}"),
             style,
@@ -3666,7 +3666,7 @@ pub(crate) fn build_poll_display(
 
 fn draw_poll_vote_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
-    let pending = match &app.poll_vote_pending {
+    let pending = match &app.poll_vote.pending {
         Some(p) => p,
         None => return,
     };
@@ -3683,10 +3683,10 @@ fn draw_poll_vote_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
     for (i, opt) in pending.options.iter().enumerate() {
-        let selected = app.poll_vote_selections.get(i).copied().unwrap_or(false);
-        let marker = if i == app.poll_vote_index { ">" } else { " " };
+        let selected = app.poll_vote.selections.get(i).copied().unwrap_or(false);
+        let marker = if i == app.poll_vote.index { ">" } else { " " };
         let checkbox = if selected { "[x]" } else { "[ ]" };
-        let style = if i == app.poll_vote_index {
+        let style = if i == app.poll_vote.index {
             Style::default().bg(theme.bg_selected).fg(theme.fg).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.fg)
@@ -3759,8 +3759,8 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
     for (i, label) in labels.iter().enumerate() {
-        let is_selected = i == app.profile_index;
-        let is_editing = is_selected && app.profile_editing;
+        let is_selected = i == app.profile.index;
+        let is_editing = is_selected && app.profile.editing;
 
         let label_style = if is_selected {
             Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
@@ -3769,15 +3769,15 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
         };
 
         let value = if is_editing {
-            format!("{}\u{2588}", app.profile_edit_buffer) // block cursor
+            format!("{}\u{2588}", app.profile.edit_buffer) // block cursor
         } else {
-            let v = &app.profile_fields[i];
+            let v = &app.profile.fields[i];
             if v.is_empty() { "(empty)".to_string() } else { v.clone() }
         };
 
         let value_style = if is_editing || is_selected {
             Style::default().bg(theme.bg_selected).fg(theme.fg)
-        } else if app.profile_fields[i].is_empty() {
+        } else if app.profile.fields[i].is_empty() {
             Style::default().fg(theme.fg_muted)
         } else {
             Style::default().fg(theme.fg)
@@ -3801,7 +3801,7 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
     lines.push(Line::from(""));
 
     // Save button
-    let save_selected = app.profile_index == 4;
+    let save_selected = app.profile.index == 4;
     let save_style = if save_selected {
         Style::default().bg(theme.bg_selected).fg(theme.accent).add_modifier(Modifier::BOLD)
     } else {
@@ -3811,7 +3811,7 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
 
     // Footer
     lines.push(Line::from(""));
-    let footer = if app.profile_editing {
+    let footer = if app.profile.editing {
         "  Type to edit | Enter confirm | Esc cancel"
     } else {
         "  j/k navigate | Enter edit | Esc close"
@@ -3833,7 +3833,7 @@ fn draw_profile(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_forward(frame: &mut Frame, app: &App, area: Rect) {
     let theme = &app.theme;
     let max_rows = 10usize;
-    let list_height = app.forward_filtered.len().min(max_rows);
+    let list_height = app.forward.filtered.len().min(max_rows);
     let pref_height = (list_height + 4) as u16; // filter line + blank + list + footer
     let (popup_area, block) = centered_popup(
         frame, area, 45, pref_height, " Forward to ", theme,
@@ -3843,12 +3843,12 @@ fn draw_forward(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
     // Filter input
-    let filter_display = if app.forward_filter.is_empty() {
+    let filter_display = if app.forward.filter.is_empty() {
         "type to filter...".to_string()
     } else {
-        app.forward_filter.clone()
+        app.forward.filter.clone()
     };
-    let filter_style = if app.forward_filter.is_empty() {
+    let filter_style = if app.forward.filter.is_empty() {
         Style::default().fg(theme.fg_muted)
     } else {
         Style::default().fg(theme.fg)
@@ -3858,22 +3858,22 @@ fn draw_forward(frame: &mut Frame, app: &App, area: Rect) {
 
     // Conversation list
     let visible_rows = inner.height.saturating_sub(3) as usize;
-    let scroll_offset = if app.forward_index >= visible_rows {
-        app.forward_index - visible_rows + 1
+    let scroll_offset = if app.forward.index >= visible_rows {
+        app.forward.index - visible_rows + 1
     } else {
         0
     };
-    let end = (scroll_offset + visible_rows).min(app.forward_filtered.len());
+    let end = (scroll_offset + visible_rows).min(app.forward.filtered.len());
 
-    if app.forward_filtered.is_empty() {
+    if app.forward.filtered.is_empty() {
         lines.push(Line::from(Span::styled(
             "  No conversations found",
             Style::default().fg(theme.fg_muted),
         )));
     } else {
-        for (i, (_id, name)) in app.forward_filtered[scroll_offset..end].iter().enumerate() {
+        for (i, (_id, name)) in app.forward.filtered[scroll_offset..end].iter().enumerate() {
             let actual_idx = scroll_offset + i;
-            let is_selected = actual_idx == app.forward_index;
+            let is_selected = actual_idx == app.forward.index;
             let prefix = if is_selected { "> " } else { "  " };
             let style = if is_selected {
                 list_overlay::selection_style(theme.bg_selected, theme.fg)
@@ -4144,7 +4144,7 @@ mod snapshot_tests {
         app.loading = false;
         app.is_demo = true;
         app.date_separators = false;
-        app.image_protocol = ImageProtocol::Halfblock;
+        app.image.image_protocol = ImageProtocol::Halfblock;
         app.populate_demo_data(fixed_date());
         app
     }
@@ -4338,8 +4338,8 @@ mod snapshot_tests {
     #[test]
     fn test_theme_picker_overlay() {
         let mut app = demo_app();
-        app.show_theme_picker = true;
-        app.theme_index = 1;
+        app.theme_picker.show = true;
+        app.theme_picker.index = 1;
         let output = render_to_string(&mut app, 100, 30);
         insta::assert_snapshot!(output);
     }
@@ -4347,9 +4347,9 @@ mod snapshot_tests {
     #[test]
     fn test_pin_duration_overlay() {
         let mut app = demo_app();
-        app.show_pin_duration = true;
-        app.pin_duration_index = 1;
-        app.pin_pending = Some(PinPending {
+        app.pin_duration.show = true;
+        app.pin_duration.index = 1;
+        app.pin_duration.pending = Some(PinPending {
             conv_id: "+15551234567".to_string(),
             is_group: false,
             target_author: "+15551234567".to_string(),
@@ -4362,8 +4362,8 @@ mod snapshot_tests {
     #[test]
     fn test_action_menu_overlay() {
         let mut app = demo_app();
-        app.show_action_menu = true;
-        app.action_menu_index = 0;
+        app.action_menu.show = true;
+        app.action_menu.index = 0;
         app.focused_msg_index = Some(0);
         let output = render_to_string(&mut app, 100, 30);
         insta::assert_snapshot!(output);
@@ -4372,9 +4372,9 @@ mod snapshot_tests {
     #[test]
     fn test_contacts_overlay() {
         let mut app = demo_app();
-        app.show_contacts = true;
-        app.contacts_index = 0;
-        app.contacts_filtered = vec![
+        app.contacts_overlay.show = true;
+        app.contacts_overlay.index = 0;
+        app.contacts_overlay.filtered = vec![
             ("+15551234567".to_string(), "Alice".to_string()),
             ("+15559876543".to_string(), "Bob".to_string()),
         ];
@@ -4385,13 +4385,13 @@ mod snapshot_tests {
     #[test]
     fn test_forward_overlay() {
         let mut app = demo_app();
-        app.show_forward = true;
-        app.forward_index = 0;
-        app.forward_filtered = vec![
+        app.forward.show = true;
+        app.forward.index = 0;
+        app.forward.filtered = vec![
             ("+15551234567".to_string(), "Alice".to_string()),
             ("+15559876543".to_string(), "Bob".to_string()),
         ];
-        app.forward_body = "Hello world".to_string();
+        app.forward.body = "Hello world".to_string();
         let output = render_to_string(&mut app, 100, 30);
         insta::assert_snapshot!(output);
     }
