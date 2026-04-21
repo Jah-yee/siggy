@@ -1,3 +1,9 @@
+//! Color themes for the UI.
+//!
+//! Built-in themes plus user-defined themes loaded from
+//! `~/.config/siggy/themes/*.toml`. The active theme is chosen by name in
+//! [`crate::config`] and applied wherever the UI renders styled text.
+
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
